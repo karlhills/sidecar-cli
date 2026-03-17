@@ -98,6 +98,10 @@ Homebrew tap updates are **stable-only** in this first implementation.
 
 If Homebrew variable/secret is missing, release still succeeds and Homebrew update is skipped.
 
+### Environment
+
+- `release` environment (recommended): add required reviewers for manual approval before publish steps run.
+
 ## One-command release
 
 Use these shortcuts from a clean branch:
@@ -179,6 +183,12 @@ git push origin main --tags
 
 - `.github/workflows/ci.yml`
 - `.github/workflows/release.yml`
+
+Security notes:
+
+- workflows pin third-party actions to commit SHAs
+- CI runs with read-only contents permission
+- release job uses `environment: release` and scoped write permission
 
 ## Packaging and formula scripts
 

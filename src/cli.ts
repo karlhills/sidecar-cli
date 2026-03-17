@@ -66,6 +66,29 @@ function respondSuccess(command: string, asJson: boolean, data: unknown, lines: 
   }
 }
 
+function summaryWasRefreshedRecently(db: Database.Database, projectId: number): boolean {
+  return Boolean(
+    db
+      .prepare(`SELECT id FROM events WHERE project_id = ? AND type = 'summary_generated' AND created_at >= datetime('now', '-3 day') LIMIT 1`)
+      .get(projectId)
+  );
+}
+
+function renderSessionHygiene(command: string, asJson: boolean, warnings: string[]): void {
+  if (asJson) {
+    printJsonEnvelope(jsonSuccess(command, { warnings, healthy: warnings.length === 0 }));
+    return;
+  }
+  if (warnings.length === 0) {
+    console.log('Session hygiene looks good.');
+    return;
+  }
+  console.log('Session hygiene warnings:');
+  for (const warning of warnings) {
+    console.log(`- ${warning}`);
+  }
+}
+
 function renderContextText(data: ReturnType<typeof buildContext>): string {
   const lines: string[] = [];
   lines.push(`Project: ${data.projectName}`);
@@ -192,6 +215,15 @@ program
       const rootPath = process.cwd();
       const sidecar = getSidecarPaths(rootPath);
       const projectName = opts.name?.trim() || path.basename(rootPath);
+      if (fs.existsSync(sidecar.sidecarPath)) {
+        const stat = fs.lstatSync(sidecar.sidecarPath);
+        if (stat.isSymbolicLink()) {
+          fail('Refusing to initialize: .sidecar is a symbolic link. Remove it and run init again.');
+        }
+        if (!stat.isDirectory()) {
+          fail('Refusing to initialize: .sidecar exists but is not a directory.');
+        }
+      }
 
       if (fs.existsSync(sidecar.sidecarPath) && !opts.force) {
         fail('Sidecar is already initialized in this project. Re-run with --force to recreate .sidecar files.');
@@ -666,23 +698,9 @@ session
     const command = 'session verify';
     try {
       const { db, projectId } = requireInitialized();
-      const summaryRecent = Boolean(
-        db
-          .prepare(`SELECT id FROM events WHERE project_id = ? AND type = 'summary_generated' AND created_at >= datetime('now', '-3 day') LIMIT 1`)
-          .get(projectId)
-      );
-      const warnings = verifySessionHygiene(db, projectId, summaryRecent);
+      const warnings = verifySessionHygiene(db, projectId, summaryWasRefreshedRecently(db, projectId));
       db.close();
-
-      if (opts.json) printJsonEnvelope(jsonSuccess(command, { warnings, healthy: warnings.length === 0 }));
-      else {
-        if (warnings.length === 0) {
-          console.log('Session hygiene looks good.');
-          return;
-        }
-        console.log('Session hygiene warnings:');
-        for (const w of warnings) console.log(`- ${w}`);
-      }
+      renderSessionHygiene(command, Boolean(opts.json), warnings);
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }
@@ -697,23 +715,9 @@ program
     const command = 'doctor';
     try {
       const { db, projectId } = requireInitialized();
-      const summaryRecent = Boolean(
-        db
-          .prepare(`SELECT id FROM events WHERE project_id = ? AND type = 'summary_generated' AND created_at >= datetime('now', '-3 day') LIMIT 1`)
-          .get(projectId)
-      );
-      const warnings = verifySessionHygiene(db, projectId, summaryRecent);
+      const warnings = verifySessionHygiene(db, projectId, summaryWasRefreshedRecently(db, projectId));
       db.close();
-
-      if (opts.json) printJsonEnvelope(jsonSuccess(command, { warnings, healthy: warnings.length === 0 }));
-      else {
-        if (warnings.length === 0) {
-          console.log('Session hygiene looks good.');
-          return;
-        }
-        console.log('Session hygiene warnings:');
-        for (const w of warnings) console.log(`- ${w}`);
-      }
+      renderSessionHygiene(command, Boolean(opts.json), warnings);
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }

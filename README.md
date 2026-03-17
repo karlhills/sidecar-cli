@@ -161,6 +161,11 @@ npm run install:hooks
 ```
 
 This installs a non-blocking pre-commit reminder that runs `npm run sidecar:reminder`.
+If a pre-commit hook already exists, Sidecar will not overwrite it unless you run:
+
+```bash
+npm run install:hooks -- --force
+```
 
 Agents can discover the CLI surface programmatically with:
 
@@ -223,6 +228,7 @@ Required configuration:
 - `HOMEBREW_TAP_GITHUB_TOKEN` (secret, optional)
 
 See [RELEASE.md](./RELEASE.md) for full release steps and examples.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for code structure and contribution guidelines.
 
 Quick preflight:
 

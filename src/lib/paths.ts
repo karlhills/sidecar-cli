@@ -29,8 +29,10 @@ export function getSidecarPaths(rootPath: string): SidecarPaths {
 export function findSidecarRoot(startDir = process.cwd()): string | null {
   let current = path.resolve(startDir);
   while (true) {
-    if (fs.existsSync(path.join(current, SIDECAR_DIR))) {
-      return current;
+    const candidate = path.join(current, SIDECAR_DIR);
+    if (fs.existsSync(candidate)) {
+      const stat = fs.lstatSync(candidate);
+      if (stat.isDirectory() && !stat.isSymbolicLink()) return current;
     }
     const parent = path.dirname(current);
     if (parent === current) return null;
