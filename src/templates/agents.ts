@@ -5,33 +5,57 @@ Sidecar is the local project memory tool for this repository.
 
 ## Required workflow
 
-1. Run \`sidecar context --format markdown\`.
-2. Do the work.
-3. Record updates:
-   - decision: \`sidecar decision record ...\`
-   - worklog: \`sidecar worklog record ...\`
-   - follow-up task: \`sidecar task add ...\`
-4. Run \`sidecar summary refresh\`.
+For any code change, run these in order before final response:
 
-## Commands to use
+1. \`sidecar context --format markdown\`
+2. implement changes
+3. \`sidecar worklog record ...\`
+4. if behavior/design/architecture changed: \`sidecar decision record ...\`
+5. \`sidecar summary refresh\`
+
+## Scope rules
+
+- If files changed: always record a worklog.
+- If behavior/design choice changed: record a decision.
+- If follow-up work exists: add a task.
+
+## Definition of Done
+
+- [ ] Context reviewed
+  - \`sidecar context --format markdown\`
+- [ ] Work recorded
+  - \`sidecar worklog record --done "<what changed>" --files <paths> --by agent\`
+- [ ] Decision recorded when needed
+  - \`sidecar decision record --title "<decision>" --summary "<why>" --by agent\`
+- [ ] Follow-up task created when needed
+  - \`sidecar task add "<follow-up>" --priority medium --by agent\`
+- [ ] Summary refreshed
+  - \`sidecar summary refresh\`
+
+## Command patterns
 
 - Context: \`sidecar context --format markdown\`
-- Decision: \`sidecar decision record --title "<title>" --summary "<summary>" --by agent\`
 - Worklog: \`sidecar worklog record --done "<what changed>" --files src/a.ts,src/b.ts --by agent\`
+- Decision: \`sidecar decision record --title "<title>" --summary "<summary>" --by agent\`
 - Task: \`sidecar task add "<follow-up>" --priority medium --by agent\`
 - Summary: \`sidecar summary refresh\`
 
-## Example workflow
+## Example: small feature build
 
 \`\`\`bash
 sidecar context --format markdown
-sidecar session start --actor agent --name codex
-sidecar decision record --title "Choose SQLite" --summary "Local, deterministic storage" --by agent
-sidecar worklog record --goal "Refactor context output" --done "Improved markdown and json context payload" --files src/cli.ts,src/services/context-service.ts --by agent
-sidecar task add "Add integration test for context output" --priority medium --by agent
+# implement small todo app feature in src/app.ts and src/todo.ts
+sidecar worklog record --goal "todo feature" --done "Added todo CRUD handlers and wired routes" --files src/app.ts,src/todo.ts --by agent
+sidecar decision record --title "Use in-memory store for v1" --summary "Keeps implementation simple for initial feature" --by agent
+sidecar task add "Persist todos to sqlite" --priority medium --by agent
 sidecar summary refresh
-sidecar session end --summary "Context and summary updates complete"
 \`\`\`
+
+## Optional hygiene reminder
+
+Run this before final response to catch missed Sidecar logging:
+
+- \`npm run sidecar:reminder\`
 
 Project: ${projectName}.
 `;

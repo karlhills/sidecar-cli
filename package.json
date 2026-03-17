@@ -13,7 +13,8 @@
     "release:cut": "node scripts/cut-release.mjs",
     "release:stable": "node scripts/cut-release.mjs --channel stable",
     "release:beta": "node scripts/cut-release.mjs --channel beta",
-    "release:rc": "node scripts/cut-release.mjs --channel rc"
+    "release:rc": "node scripts/cut-release.mjs --channel rc",
+    "sidecar:reminder": "node scripts/sidecar-reminder.mjs"
   },
   "keywords": [],
   "author": "",
