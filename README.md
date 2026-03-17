@@ -23,16 +23,29 @@ Sidecar is a local-first, CLI-first project memory and recording tool for human 
 
 ## Install
 
-Install globally:
+Install globally (stable):
 
 ```bash
 npm install -g sidecar-cli
+```
+
+Install beta:
+
+```bash
+npm install -g sidecar-cli@beta
+```
+
+Install rc:
+
+```bash
+npm install -g sidecar-cli@rc
 ```
 
 Or run without install:
 
 ```bash
 npx sidecar-cli --help
+npx sidecar-cli@beta --help
 ```
 
 Requirements:
@@ -70,6 +83,7 @@ This creates:
 
 - `.sidecar/sidecar.db`
 - `.sidecar/config.json`
+- `.sidecar/preferences.json`
 - `.sidecar/AGENTS.md`
 - `.sidecar/summary.md`
 
