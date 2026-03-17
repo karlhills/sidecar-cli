@@ -190,3 +190,11 @@ Quick preflight:
 ```bash
 npm run release_check -- --tag v1.2.3
 ```
+
+One-command release:
+
+```bash
+npm run release:stable -- --version 1.2.3
+npm run release:beta -- --version 1.2.3 --pre 1
+npm run release:rc -- --version 1.2.3 --pre 1
+```

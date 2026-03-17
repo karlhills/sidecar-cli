@@ -56,6 +56,29 @@ Homebrew tap updates are **stable-only** in this first implementation.
 
 If Homebrew variable/secret is missing, release still succeeds and Homebrew update is skipped.
 
+## One-command release
+
+Use these shortcuts from a clean `main` branch:
+
+```bash
+# stable
+npm run release:stable -- --version 1.2.3
+
+# beta
+npm run release:beta -- --version 1.2.3 --pre 1
+
+# rc
+npm run release:rc -- --version 1.2.3 --pre 1
+```
+
+These commands will:
+
+1. bump package version
+2. commit version files
+3. run preflight validation
+4. create release tag
+5. push main + tags
+
 ## Preflight check
 
 Before pushing a release tag, validate tag/version:

@@ -9,7 +9,11 @@
     "test": "node -e \"console.log('No tests configured')\"",
     "pack_release": "node scripts/create-release-tarball.mjs",
     "clean": "node scripts/clean-dist.mjs",
-    "release_check": "node scripts/release-check.mjs"
+    "release_check": "node scripts/release-check.mjs",
+    "release:cut": "node scripts/cut-release.mjs",
+    "release:stable": "node scripts/cut-release.mjs --channel stable",
+    "release:beta": "node scripts/cut-release.mjs --channel beta",
+    "release:rc": "node scripts/cut-release.mjs --channel rc"
   },
   "keywords": [],
   "author": "",
