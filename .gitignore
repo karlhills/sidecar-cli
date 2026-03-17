@@ -2,3 +2,5 @@ node_modules/
 dist/
 .sidecar/
 .DS_Store
+
+release-artifacts/
