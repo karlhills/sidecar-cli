@@ -15,9 +15,9 @@ if (!fs.existsSync(path.join(root, '.git'))) {
 fs.mkdirSync(hooksDir, { recursive: true });
 
 const script = `#!/usr/bin/env sh
-# Sidecar reminder hook (non-blocking)
+# Sidecar guard hook (blocks commit for staged non-doc code changes without worklog + summary refresh)
 if command -v npm >/dev/null 2>&1; then
-  npm run -s sidecar:reminder || true
+  npm run -s sidecar:reminder -- --staged --enforce
 fi
 `;
 
@@ -38,4 +38,4 @@ fs.writeFileSync(hookPath, script, { mode: 0o755 });
 fs.chmodSync(hookPath, 0o755);
 
 console.log('Installed git hook: .git/hooks/pre-commit');
-console.log('This hook runs: npm run -s sidecar:reminder');
+console.log('This hook runs: npm run -s sidecar:reminder -- --staged --enforce');

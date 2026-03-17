@@ -51,4 +51,9 @@ Optional local reminder hook:
 npm run install:hooks
 ```
 
+This is optional and per-repository clone. Running `sidecar init` does not install hooks.
+
+The installed pre-commit hook enforces Sidecar logging for staged non-doc code changes.
+It blocks commit when a new `worklog` and `summary refresh` have not been recorded since the last commit.
+
 Use `npm run install:hooks -- --force` only if you intentionally want to replace an existing `pre-commit` hook.

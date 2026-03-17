@@ -168,7 +168,18 @@ Optional local enforcement:
 npm run install:hooks
 ```
 
-This installs a non-blocking pre-commit reminder that runs `npm run sidecar:reminder`.
+This is optional and per-repository clone. `sidecar init` does not install git hooks automatically.
+
+This installs a pre-commit guard that checks staged non-doc code changes.
+If staged code changes are present, commit is blocked unless both are recorded since the last commit:
+
+- a `worklog` event
+- a `summary refresh` event
+
+The guard command is:
+
+- `npm run sidecar:reminder -- --staged --enforce`
+
 If a pre-commit hook already exists, Sidecar will not overwrite it unless you run:
 
 ```bash

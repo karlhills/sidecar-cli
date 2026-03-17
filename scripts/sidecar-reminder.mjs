@@ -4,20 +4,45 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 
+const args = process.argv.slice(2);
+const enforce = args.includes('--enforce');
+const stagedOnly = args.includes('--staged');
+
 function sh(cmd) {
   return execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 
-function hasGitChanges() {
+function isDocPath(filePath) {
+  const normalized = filePath.replace(/\\/g, '/');
+  if (normalized.startsWith('.sidecar/')) return true;
+  if (normalized.startsWith('docs/')) return true;
+  if (normalized.startsWith('.github/')) return true;
+  if (normalized === 'LICENSE' || normalized === 'LICENSE.md') return true;
+  return /\.(md|mdx|txt|rst|adoc)$/i.test(normalized);
+}
+
+function getChangedFiles() {
   try {
-    const out = sh('git status --porcelain');
-    if (!out) return false;
+    const cmd = stagedOnly
+      ? 'git diff --cached --name-only --diff-filter=ACMR'
+      : 'git status --porcelain';
+    const out = sh(cmd);
+    if (!out) return [];
+
+    if (stagedOnly) {
+      return out
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+    }
+
     return out
       .split('\n')
       .filter(Boolean)
-      .some((line) => !line.includes('.sidecar/'));
+      .map((line) => line.slice(3).trim())
+      .filter(Boolean);
   } catch {
-    return false;
+    return [];
   }
 }
 
@@ -34,36 +59,82 @@ function findSidecarRoot(start = process.cwd()) {
 
 const root = findSidecarRoot();
 if (!root) {
-  console.log('Sidecar reminder: no .sidecar directory found.');
+  const message = 'Sidecar reminder: no .sidecar directory found.';
+  if (enforce) {
+    console.error(message);
+    process.exit(1);
+  }
+  console.log(message);
   process.exit(0);
 }
 
-if (!hasGitChanges()) {
-  console.log('Sidecar reminder: no pending code changes detected.');
+const changedFiles = getChangedFiles().filter((filePath) => !isDocPath(filePath));
+if (changedFiles.length === 0) {
+  console.log('Sidecar reminder: no non-doc code changes detected.');
   process.exit(0);
 }
 
 const dbPath = path.join(root, '.sidecar', 'sidecar.db');
 if (!fs.existsSync(dbPath)) {
-  console.log('Sidecar reminder: .sidecar exists but sidecar.db is missing.');
+  const message = 'Sidecar reminder: .sidecar exists but sidecar.db is missing.';
+  if (enforce) {
+    console.error(message);
+    process.exit(1);
+  }
+  console.log(message);
   process.exit(0);
 }
 
 const db = new Database(dbPath, { readonly: true });
-const row = db
+const lastCommitAt = (() => {
+  try {
+    const ts = sh('git log -1 --format=%cI');
+    return ts || '1970-01-01T00:00:00.000Z';
+  } catch {
+    return '1970-01-01T00:00:00.000Z';
+  }
+})();
+
+const worklogSinceCommit = db
+  .prepare(`SELECT id, created_at FROM events WHERE type = 'worklog' AND created_at >= ? ORDER BY created_at DESC LIMIT 1`)
+  .get(lastCommitAt);
+const summarySinceCommit = db
+  .prepare(`SELECT id, created_at FROM events WHERE type = 'summary_generated' AND created_at >= ? ORDER BY created_at DESC LIMIT 1`)
+  .get(lastCommitAt);
+const lastEvent = db
   .prepare(`SELECT type, created_at FROM events ORDER BY created_at DESC LIMIT 1`)
   .get();
+
 db.close();
 
-if (!row) {
+const missingWorklog = !worklogSinceCommit;
+const missingSummary = !summarySinceCommit;
+
+if (enforce && (missingWorklog || missingSummary)) {
+  console.error('Sidecar guard: non-doc staged code changes detected without required Sidecar updates.');
+  if (missingWorklog) {
+    console.error('- Missing worklog since last commit.');
+    console.error('  Run: sidecar worklog record --done "<what changed>" --files <paths> --by human');
+  }
+  if (missingSummary) {
+    console.error('- Missing summary refresh since last commit.');
+    console.error('  Run: sidecar summary refresh');
+  }
+  console.error('Then retry commit.');
+  process.exit(1);
+}
+
+if (!lastEvent) {
   console.log('Sidecar reminder: code changed but no events recorded yet. Suggested: sidecar worklog record --done "..." --files ...');
   process.exit(0);
 }
 
-const lastTs = new Date(row.created_at).getTime();
+const lastTs = new Date(lastEvent.created_at).getTime();
 const ageMinutes = (Date.now() - lastTs) / 60000;
 if (Number.isFinite(ageMinutes) && ageMinutes > 30) {
-  console.log(`Sidecar reminder: code changed and last Sidecar event is ${Math.round(ageMinutes)}m old (${row.type}). Suggested: record worklog + summary refresh.`);
+  console.log(
+    `Sidecar reminder: code changed and last Sidecar event is ${Math.round(ageMinutes)}m old (${lastEvent.type}). Suggested: record worklog + summary refresh.`
+  );
 } else {
-  console.log(`Sidecar reminder: recent Sidecar event found (${row.type} at ${row.created_at}).`);
+  console.log(`Sidecar reminder: recent Sidecar event found (${lastEvent.type} at ${lastEvent.created_at}).`);
 }
