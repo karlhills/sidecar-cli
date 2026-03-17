@@ -1,0 +1,19 @@
+class Sidecar < Formula
+  desc "Local-first project memory and recording CLI"
+  homepage "https://github.com/OWNER/REPO"
+  url "https://github.com/OWNER/REPO/releases/download/vX.Y.Z/sidecar-vX.Y.Z.tar.gz"
+  version "X.Y.Z"
+  sha256 "REPLACE_WITH_SHA256"
+  license "ISC"
+
+  depends_on "node"
+
+  def install
+    libexec.install Dir["*"]
+    bin.write_exec_script libexec/"dist/cli.js"
+  end
+
+  test do
+    assert_match "sidecar", shell_output("#{bin}/sidecar --help")
+  end
+end
