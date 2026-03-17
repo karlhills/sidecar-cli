@@ -10,6 +10,7 @@ import { nowIso, humanTime, stringifyJson } from './lib/format.js';
 import { SidecarError } from './lib/errors.js';
 import { jsonFailure, jsonSuccess, printJsonEnvelope } from './lib/output.js';
 import { bannerDisabled, renderBanner } from './lib/banner.js';
+import { getUpdateNotice } from './lib/update-check.js';
 import { requireInitialized } from './db/client.js';
 import { renderAgentsMarkdown } from './templates/agents.js';
 import { refreshSummaryFile } from './services/summary-service.js';
@@ -159,6 +160,21 @@ function renderContextMarkdown(data: ReturnType<typeof buildContext>): string {
 const program = new Command();
 program.name('sidecar').description('Local-first project memory and recording CLI').version(pkg.version);
 program.option('--no-banner', 'Disable Sidecar banner output');
+
+function maybePrintUpdateNotice(): void {
+  const jsonRequested = process.argv.includes('--json');
+  const notice = getUpdateNotice({
+    packageName: 'sidecar-cli',
+    currentVersion: pkg.version,
+    skip: jsonRequested,
+  });
+  if (!notice) return;
+
+  const installTag = notice.channel === 'latest' ? 'latest' : notice.channel;
+  console.log('');
+  console.log(`Update available: ${pkg.version} -> ${notice.latestVersion}`);
+  console.log(`Run: npm install -g sidecar-cli@${installTag}`);
+}
 
 program
   .command('init')
@@ -756,7 +772,9 @@ if (process.argv.length === 2) {
     console.log('');
   }
   program.outputHelp();
+  maybePrintUpdateNotice();
   process.exit(0);
 }
 
 program.parse(process.argv);
+maybePrintUpdateNotice();
