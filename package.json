@@ -8,7 +8,8 @@
     "start": "node dist/cli.js",
     "test": "node -e \"console.log('No tests configured')\"",
     "pack_release": "node scripts/create-release-tarball.mjs",
-    "clean": "node scripts/clean-dist.mjs"
+    "clean": "node scripts/clean-dist.mjs",
+    "release_check": "node scripts/release-check.mjs"
   },
   "keywords": [],
   "author": "",

@@ -56,6 +56,21 @@ Homebrew tap updates are **stable-only** in this first implementation.
 
 If Homebrew variable/secret is missing, release still succeeds and Homebrew update is skipped.
 
+## Preflight check
+
+Before pushing a release tag, validate tag/version:
+
+```bash
+npm run release_check -- --tag v1.2.3
+```
+
+For beta/rc:
+
+```bash
+npm run release_check -- --tag v1.2.3-beta.1
+npm run release_check -- --tag v1.2.3-rc.1
+```
+
 ## Release commands
 
 ### Stable

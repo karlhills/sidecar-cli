@@ -184,3 +184,9 @@ Required configuration:
 - `HOMEBREW_TAP_GITHUB_TOKEN` (secret, optional)
 
 See [RELEASE.md](./RELEASE.md) for full release steps and examples.
+
+Quick preflight:
+
+```bash
+npm run release_check -- --tag v1.2.3
+```
