@@ -1,5 +1,7 @@
-export function renderAgentsMarkdown(projectName: string): string {
+function renderSharedGuide(projectName: string, heading: string): string {
   return `# Sidecar Agent Guide
+
+${heading}
 
 Sidecar is the local project memory tool for this repository.
 
@@ -70,4 +72,15 @@ Run this before final response to catch missed Sidecar logging:
 
 Project: ${projectName}.
 `;
+}
+
+export function renderAgentsMarkdown(projectName: string): string {
+  return renderSharedGuide(projectName, 'Use this guide for AI coding agents in this repository.');
+}
+
+export function renderClaudeMarkdown(projectName: string): string {
+  return renderSharedGuide(
+    projectName,
+    'Claude-specific note: treat this as required workflow, not advisory context.'
+  );
 }

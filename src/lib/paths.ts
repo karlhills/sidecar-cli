@@ -7,6 +7,7 @@ export interface SidecarPaths {
   rootPath: string;
   sidecarPath: string;
   rootAgentsPath: string;
+  rootClaudePath: string;
   dbPath: string;
   configPath: string;
   preferencesPath: string;
@@ -20,6 +21,7 @@ export function getSidecarPaths(rootPath: string): SidecarPaths {
     rootPath,
     sidecarPath,
     rootAgentsPath: path.join(rootPath, 'AGENTS.md'),
+    rootClaudePath: path.join(rootPath, 'CLAUDE.md'),
     dbPath: path.join(sidecarPath, 'sidecar.db'),
     configPath: path.join(sidecarPath, 'config.json'),
     preferencesPath: path.join(sidecarPath, 'preferences.json'),

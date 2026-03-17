@@ -79,6 +79,7 @@ This creates:
 - `.sidecar/AGENTS.md`
 - `.sidecar/summary.md`
 - `AGENTS.md` (repo root)
+- `CLAUDE.md` (repo root)
 
 Use `--force` to overwrite Sidecar-managed files.
 

@@ -1,6 +1,6 @@
 # Sidecar Agent Guide
 
-Use this guide for AI coding agents in this repository.
+Claude-specific note: treat this as required workflow, not advisory context.
 
 Sidecar is the local project memory tool for this repository.
 

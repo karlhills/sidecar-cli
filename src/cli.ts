@@ -12,7 +12,7 @@ import { jsonFailure, jsonSuccess, printJsonEnvelope } from './lib/output.js';
 import { bannerDisabled, renderBanner } from './lib/banner.js';
 import { getUpdateNotice } from './lib/update-check.js';
 import { requireInitialized } from './db/client.js';
-import { renderAgentsMarkdown } from './templates/agents.js';
+import { renderAgentsMarkdown, renderClaudeMarkdown } from './templates/agents.js';
 import { refreshSummaryFile } from './services/summary-service.js';
 import { buildContext } from './services/context-service.js';
 import { getCapabilitiesManifest } from './services/capabilities-service.js';
@@ -237,7 +237,9 @@ program
         sidecar.summaryPath,
       ];
       const shouldWriteRootAgents = Boolean(opts.force) || !fs.existsSync(sidecar.rootAgentsPath);
+      const shouldWriteRootClaude = Boolean(opts.force) || !fs.existsSync(sidecar.rootClaudePath);
       if (shouldWriteRootAgents) files.push(sidecar.rootAgentsPath);
+      if (shouldWriteRootClaude) files.push(sidecar.rootClaudePath);
 
       fs.mkdirSync(sidecar.sidecarPath, { recursive: true });
       if (opts.force) {
@@ -279,6 +281,9 @@ program
       fs.writeFileSync(sidecar.agentsPath, renderAgentsMarkdown(projectName));
       if (shouldWriteRootAgents) {
         fs.writeFileSync(sidecar.rootAgentsPath, renderAgentsMarkdown(projectName));
+      }
+      if (shouldWriteRootClaude) {
+        fs.writeFileSync(sidecar.rootClaudePath, renderClaudeMarkdown(projectName));
       }
 
       const db2 = new Database(sidecar.dbPath);
