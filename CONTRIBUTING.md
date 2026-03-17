@@ -6,6 +6,17 @@
 - Prefer explicit, predictable command behavior over cleverness.
 - Keep JSON output schema stable.
 - Consolidate shared behavior in helpers/services instead of duplicating logic in command actions.
+- Use Sidecar to document repository changes before finalizing work.
+
+## Required Sidecar logging for repo changes
+
+For any code change in this repo, run:
+
+1. `sidecar context --format markdown`
+2. `sidecar worklog record --done "<what changed>" --files <paths> --by human|agent`
+3. `sidecar decision record ...` when behavior/design changes
+4. `sidecar task add ...` when follow-up work exists
+5. `sidecar summary refresh`
 
 ## Code structure
 

@@ -181,6 +181,16 @@ Agents can discover the CLI surface programmatically with:
 sidecar capabilities --json
 ```
 
+## Repo policy
+
+When changes are made in this repo, document them in Sidecar:
+
+1. `sidecar context --format markdown`
+2. `sidecar worklog record --done "<what changed>" --files <paths> --by human|agent`
+3. `sidecar decision record ...` when behavior/design changes
+4. `sidecar task add ...` for follow-up work
+5. `sidecar summary refresh`
+
 ## Local storage details
 
 All data is local in `.sidecar/sidecar.db` (SQLite).
