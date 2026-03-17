@@ -83,8 +83,8 @@ jobs:
         run: |
           mkdir -p release-artifacts
           RELEASE_VERSION='${{ env.TAG_NAME }}' node scripts/create-release-tarball.mjs > release-artifacts/pack.json
-          echo "tarball_path=$(node -e \"const fs=require('fs');const x=JSON.parse(fs.readFileSync('release-artifacts/pack.json','utf8'));process.stdout.write(x.tarballPath);\")" >> "$GITHUB_OUTPUT"
-          echo "tarball_name=$(node -e \"const fs=require('fs');const x=JSON.parse(fs.readFileSync('release-artifacts/pack.json','utf8'));process.stdout.write(x.tarballName);\")" >> "$GITHUB_OUTPUT"
+          echo "tarball_path=$(jq -r '.tarballPath' release-artifacts/pack.json)" >> "$GITHUB_OUTPUT"
+          echo "tarball_name=$(jq -r '.tarballName' release-artifacts/pack.json)" >> "$GITHUB_OUTPUT"
 
       - name: Compute checksum
         id: checksum
