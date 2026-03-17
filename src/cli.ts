@@ -236,6 +236,8 @@ program
         sidecar.agentsPath,
         sidecar.summaryPath,
       ];
+      const shouldWriteRootAgents = Boolean(opts.force) || !fs.existsSync(sidecar.rootAgentsPath);
+      if (shouldWriteRootAgents) files.push(sidecar.rootAgentsPath);
 
       fs.mkdirSync(sidecar.sidecarPath, { recursive: true });
       if (opts.force) {
@@ -275,6 +277,9 @@ program
         })
       );
       fs.writeFileSync(sidecar.agentsPath, renderAgentsMarkdown(projectName));
+      if (shouldWriteRootAgents) {
+        fs.writeFileSync(sidecar.rootAgentsPath, renderAgentsMarkdown(projectName));
+      }
 
       const db2 = new Database(sidecar.dbPath);
       const refreshed = refreshSummaryFile(db2, rootPath, 1, 10);

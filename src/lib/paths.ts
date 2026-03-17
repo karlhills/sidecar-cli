@@ -6,6 +6,7 @@ export const SIDECAR_DIR = '.sidecar';
 export interface SidecarPaths {
   rootPath: string;
   sidecarPath: string;
+  rootAgentsPath: string;
   dbPath: string;
   configPath: string;
   preferencesPath: string;
@@ -18,6 +19,7 @@ export function getSidecarPaths(rootPath: string): SidecarPaths {
   return {
     rootPath,
     sidecarPath,
+    rootAgentsPath: path.join(rootPath, 'AGENTS.md'),
     dbPath: path.join(sidecarPath, 'sidecar.db'),
     configPath: path.join(sidecarPath, 'config.json'),
     preferencesPath: path.join(sidecarPath, 'preferences.json'),
