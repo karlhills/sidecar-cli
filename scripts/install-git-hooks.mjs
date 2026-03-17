@@ -1,0 +1,27 @@
+#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+
+const root = process.cwd();
+const hooksDir = path.join(root, '.git', 'hooks');
+const hookPath = path.join(hooksDir, 'pre-commit');
+
+if (!fs.existsSync(path.join(root, '.git'))) {
+  console.error('No .git directory found. Run from repository root.');
+  process.exit(1);
+}
+
+fs.mkdirSync(hooksDir, { recursive: true });
+
+const script = `#!/usr/bin/env sh
+# Sidecar reminder hook (non-blocking)
+if command -v npm >/dev/null 2>&1; then
+  npm run -s sidecar:reminder || true
+fi
+`;
+
+fs.writeFileSync(hookPath, script);
+fs.chmodSync(hookPath, 0o755);
+
+console.log('Installed git hook: .git/hooks/pre-commit');
+console.log('This hook runs: npm run -s sidecar:reminder');

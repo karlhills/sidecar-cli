@@ -15,6 +15,48 @@ Examples:
 - tag `v1.2.3` requires `"version": "1.2.3"`
 - tag `v1.2.3-beta.1` requires `"version": "1.2.3-beta.1"`
 
+## Branching strategy (recommended)
+
+Use three long-lived lanes:
+
+- `main`: stable production branch
+- `next`: beta feature branch
+- `release/x.y.z`: RC stabilization branch for a target release
+
+### Responsibilities
+
+- `main`
+  - only production-ready code
+  - stable tags (`vX.Y.Z`) are cut from `main`
+- `next`
+  - active feature development
+  - beta tags (`vX.Y.Z-beta.N`) are cut from `next`
+- `release/x.y.z`
+  - cut from `next` when feature-complete for that release
+  - accept only stabilization fixes (bugs, docs, polish)
+  - RC tags (`vX.Y.Z-rc.N`) are cut from this branch
+
+### Promotion flow
+
+1. Build features on short-lived branches into `next`.
+2. Cut `release/x.y.z` from `next` when ready to stabilize.
+3. Publish beta from `next` while features are still moving.
+4. Publish RC from `release/x.y.z` while hardening.
+5. Merge `release/x.y.z` into `main` and tag stable.
+6. Merge `main` back into `next` after stable release so branches stay aligned.
+
+### Emergency hotfix flow
+
+If stable needs a break-fix:
+
+1. Create `hotfix/x.y.(z+1)` from `main`.
+2. Implement minimal fix and merge to `main`.
+3. Tag stable patch release (`vX.Y.(Z+1)`).
+4. Cherry-pick or merge the same fix into `next`.
+5. If an RC branch is open, apply the fix there too.
+
+Rule: every hotfix merged to `main` must be backported to `next` (and open `release/*` branches) to prevent regressions.
+
 ## What the release workflow does
 
 On push of any `v*` tag:
@@ -58,7 +100,11 @@ If Homebrew variable/secret is missing, release still succeeds and Homebrew upda
 
 ## One-command release
 
-Use these shortcuts from a clean `main` branch:
+Use these shortcuts from a clean branch:
+
+- stable: from `main`
+- beta: from `next`
+- rc: from `release/x.y.z`
 
 ```bash
 # stable
@@ -155,3 +201,4 @@ Safe to commit:
 - packaging scripts
 - formula templates
 - release docs
+- branching/release policy docs (this file)

@@ -3,6 +3,16 @@ export function renderAgentsMarkdown(projectName: string): string {
 
 Sidecar is the local project memory tool for this repository.
 
+## MUST before final response
+
+If you changed code, you MUST run these commands in order:
+
+1. \`sidecar context --format markdown\`
+2. \`sidecar worklog record --done "<what changed>" --files <paths> --by agent\`
+3. if behavior/design/architecture changed: \`sidecar decision record --title "<decision>" --summary "<why>" --by agent\`
+4. if follow-up exists: \`sidecar task add "<follow-up>" --priority medium --by agent\`
+5. \`sidecar summary refresh\`
+
 ## Required workflow
 
 For any code change, run these in order before final response:
@@ -18,6 +28,7 @@ For any code change, run these in order before final response:
 - If files changed: always record a worklog.
 - If behavior/design choice changed: record a decision.
 - If follow-up work exists: add a task.
+- Never skip summary refresh after recording work.
 
 ## Definition of Done
 

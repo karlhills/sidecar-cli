@@ -14,7 +14,8 @@
     "release:stable": "node scripts/cut-release.mjs --channel stable",
     "release:beta": "node scripts/cut-release.mjs --channel beta",
     "release:rc": "node scripts/cut-release.mjs --channel rc",
-    "sidecar:reminder": "node scripts/sidecar-reminder.mjs"
+    "sidecar:reminder": "node scripts/sidecar-reminder.mjs",
+    "install:hooks": "node scripts/install-git-hooks.mjs"
   },
   "keywords": [],
   "author": "",

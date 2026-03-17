@@ -144,14 +144,23 @@ sidecar session end --summary "Initialization and recording flow implemented"
 ## AI agent usage
 
 Sidecar generates `.sidecar/AGENTS.md` during `init`.
+This repo also includes a root `AGENTS.md` so the policy is visible before any `.sidecar` lookup.
 
-That file explains:
+Required minimum for any code change:
 
-- this repo uses Sidecar
-- required workflow for agents
-- when to record notes, decisions, worklogs, and tasks
-- recommended commands
-- a practical session checklist and example
+1. `sidecar context --format markdown`
+2. `sidecar worklog record --done "<what changed>" --files <paths> --by agent`
+3. if behavior/design changed: `sidecar decision record ...`
+4. if follow-up exists: `sidecar task add ...`
+5. `sidecar summary refresh`
+
+Optional local enforcement:
+
+```bash
+npm run install:hooks
+```
+
+This installs a non-blocking pre-commit reminder that runs `npm run sidecar:reminder`.
 
 Agents can discover the CLI surface programmatically with:
 
