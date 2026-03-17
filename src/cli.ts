@@ -9,6 +9,7 @@ import { getSidecarPaths } from './lib/paths.js';
 import { nowIso, humanTime, stringifyJson } from './lib/format.js';
 import { SidecarError } from './lib/errors.js';
 import { jsonFailure, jsonSuccess, printJsonEnvelope } from './lib/output.js';
+import { bannerDisabled, renderBanner } from './lib/banner.js';
 import { requireInitialized } from './db/client.js';
 import { renderAgentsMarkdown } from './templates/agents.js';
 import { refreshSummaryFile } from './services/summary-service.js';
@@ -157,6 +158,7 @@ function renderContextMarkdown(data: ReturnType<typeof buildContext>): string {
 
 const program = new Command();
 program.name('sidecar').description('Local-first project memory and recording CLI').version(pkg.version);
+program.option('--no-banner', 'Disable Sidecar banner output');
 
 program
   .command('init')
@@ -239,6 +241,11 @@ program
         timestamp: nowIso(),
       };
 
+      const shouldShowBanner = !opts.json && !bannerDisabled();
+      if (shouldShowBanner) {
+        console.log(renderBanner());
+        console.log('');
+      }
       respondSuccess(command, Boolean(opts.json), data, [
         `Initialized Sidecar for project: ${projectName}`,
         'Sidecar provides local project memory for decisions, work logs, tasks, and summaries.',
@@ -742,5 +749,14 @@ artifact
       handleCommandError(command, Boolean(opts.json), err);
     }
   });
+
+if (process.argv.length === 2) {
+  if (!bannerDisabled()) {
+    console.log(renderBanner());
+    console.log('');
+  }
+  program.outputHelp();
+  process.exit(0);
+}
 
 program.parse(process.argv);

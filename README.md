@@ -1,3 +1,7 @@
+[■]─[▪]  sidecar
+
+project memory for your work
+
 # Sidecar CLI
 
 Sidecar is a local-first, CLI-first project memory and recording tool for human developers and AI coding agents.
