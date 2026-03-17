@@ -19,6 +19,7 @@ function read(cmd) {
 const channel = getArg('--channel');
 const baseVersion = getArg('--version');
 const pre = getArg('--pre');
+const dryRun = args.includes('--dry-run');
 
 if (!channel || !['stable', 'beta', 'rc'].includes(channel)) {
   console.error('Missing/invalid --channel. Use stable|beta|rc.');
@@ -45,7 +46,7 @@ const version =
 const tag = `v${version}`;
 
 const gitStatus = read('git status --porcelain');
-if (gitStatus) {
+if (gitStatus && !dryRun) {
   console.error('Working tree is not clean. Commit/stash changes before cutting a release.');
   process.exit(1);
 }
@@ -70,11 +71,29 @@ if (existingRemoteTag) {
 
 console.log(`Cutting ${channel} release ${version} (${tag})`);
 
-run(`npm version ${version} --no-git-tag-version`);
-run('git add package.json package-lock.json');
-run(`git commit -m "release: ${version}"`);
-run(`npm run release_check -- --tag ${tag}`);
-run(`git tag ${tag}`);
-run('git push origin main --tags');
+const commands = [
+  `npm version ${version} --no-git-tag-version`,
+  'git add package.json package-lock.json',
+  `git commit -m "release: ${version}"`,
+  `npm run release_check -- --tag ${tag}`,
+  `git tag ${tag}`,
+  'git push origin main --tags',
+];
+
+if (dryRun) {
+  console.log('Dry run enabled. No changes will be made.');
+  if (gitStatus) {
+    console.log('Note: working tree is currently dirty.');
+  }
+  console.log('Planned commands:');
+  for (const cmd of commands) {
+    console.log(`- ${cmd}`);
+  }
+  process.exit(0);
+}
+
+for (const cmd of commands) {
+  run(cmd);
+}
 
 console.log('Release tag pushed. GitHub Actions release workflow should now run.');

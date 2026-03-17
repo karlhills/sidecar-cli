@@ -69,6 +69,9 @@ npm run release:beta -- --version 1.2.3 --pre 1
 
 # rc
 npm run release:rc -- --version 1.2.3 --pre 1
+
+# dry run preview
+npm run release:beta -- --version 1.2.3 --pre 1 --dry-run
 ```
 
 These commands will:
@@ -136,3 +139,19 @@ git push origin main --tags
 - `scripts/create-release-tarball.mjs`
 - `scripts/generate-homebrew-formula.mjs`
 - `templates/homebrew/sidecar.rb.template`
+
+## Public repo hygiene: what not to commit
+
+Do not commit:
+
+- any secret tokens (`NPM_TOKEN`, `HOMEBREW_TAP_GITHUB_TOKEN`, `.npmrc` with auth)
+- local build/release artifacts (`release-artifacts/`, `*.tgz`)
+- local runtime data (`.sidecar/`)
+- machine-specific files (`.DS_Store`, editor temp files)
+
+Safe to commit:
+
+- workflow files
+- packaging scripts
+- formula templates
+- release docs

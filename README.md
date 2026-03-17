@@ -197,4 +197,7 @@ One-command release:
 npm run release:stable -- --version 1.2.3
 npm run release:beta -- --version 1.2.3 --pre 1
 npm run release:rc -- --version 1.2.3 --pre 1
+
+# preview only (no commit/tag/push)
+npm run release:beta -- --version 1.2.3 --pre 1 --dry-run
 ```
