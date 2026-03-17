@@ -33,11 +33,25 @@ Install rc:
 npm install -g sidecar-cli@rc
 ```
 
+Install with Homebrew (stable):
+
+```bash
+brew tap karlhills/sidecar
+brew install sidecar
+```
+
 Or run without install:
 
 ```bash
 npx sidecar-cli --help
 npx sidecar-cli@beta --help
+```
+
+Update Homebrew install:
+
+```bash
+brew update
+brew upgrade sidecar
 ```
 
 Requirements:
