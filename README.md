@@ -11,15 +11,7 @@ Sidecar is a local-first, CLI-first project memory and recording tool for human 
 - Keep project memory structured and local.
 - Make session handoffs easier for humans and agents.
 - Record decisions, work logs, tasks, notes, sessions, and artifacts in one stable CLI.
-- Generate deterministic context and summary outputs without any cloud or LLM dependency.
-
-## v1 scope
-
-- No cloud sync
-- No remote server
-- No GUI
-- No MCP server
-- No passive prompt capture
+- Generate deterministic context and summary outputs from local project data.
 
 ## Install
 
@@ -76,7 +68,7 @@ npm run dev -- --help
 Initialize in a project directory:
 
 ```bash
-npm run dev -- init
+sidecar init
 ```
 
 This creates:
@@ -86,6 +78,7 @@ This creates:
 - `.sidecar/preferences.json`
 - `.sidecar/AGENTS.md`
 - `.sidecar/summary.md`
+- `AGENTS.md` (repo root)
 
 Use `--force` to overwrite Sidecar-managed files.
 
@@ -200,49 +193,5 @@ This makes Sidecar easy to automate from scripts and AI agents.
 
 ## Release and distribution
 
-Sidecar uses tag-based GitHub Actions releases.
-
-Tag formats:
-
-- stable: `v1.2.3`
-- beta: `v1.2.3-beta.1`
-- rc: `v1.2.3-rc.1`
-
-Behavior:
-
-- stable tags publish npm `latest`
-- beta tags publish npm `beta`
-- rc tags publish npm `rc`
-- all release tags create GitHub Releases and upload tarball assets
-- Homebrew tap updates are stable-only (beta/rc intentionally skipped)
-
-Workflows:
-
-- CI: `.github/workflows/ci.yml`
-- Release: `.github/workflows/release.yml`
-
-Required configuration:
-
-- `NPM_TOKEN` (secret)
-- `HOMEBREW_TAP_REPO` (variable, optional)
-- `HOMEBREW_TAP_GITHUB_TOKEN` (secret, optional)
-
-See [RELEASE.md](./RELEASE.md) for full release steps and examples.
+See [RELEASE.md](./RELEASE.md) for publishing/release details.
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for code structure and contribution guidelines.
-
-Quick preflight:
-
-```bash
-npm run release_check -- --tag v1.2.3
-```
-
-One-command release:
-
-```bash
-npm run release:stable -- --version 1.2.3
-npm run release:beta -- --version 1.2.3 --pre 1
-npm run release:rc -- --version 1.2.3 --pre 1
-
-# preview only (no commit/tag/push)
-npm run release:beta -- --version 1.2.3 --pre 1 --dry-run
-```
