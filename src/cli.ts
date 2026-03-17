@@ -173,23 +173,37 @@ program
     try {
       const rootPath = process.cwd();
       const sidecar = getSidecarPaths(rootPath);
+      const projectName = opts.name?.trim() || path.basename(rootPath);
 
-      const files = [sidecar.dbPath, sidecar.configPath, sidecar.agentsPath, sidecar.summaryPath];
-      const existing = files.filter((f) => fs.existsSync(f));
-      if (existing.length > 0 && !opts.force) {
-        fail(`Sidecar files already exist. Re-run with --force to overwrite: ${existing.join(', ')}`);
+      if (fs.existsSync(sidecar.sidecarPath) && !opts.force) {
+        fail('Sidecar is already initialized in this project. Re-run with --force to recreate .sidecar files.');
       }
+
+      const files = [
+        sidecar.dbPath,
+        sidecar.configPath,
+        sidecar.preferencesPath,
+        sidecar.agentsPath,
+        sidecar.summaryPath,
+      ];
 
       fs.mkdirSync(sidecar.sidecarPath, { recursive: true });
       if (opts.force) {
-        for (const file of [sidecar.dbPath, `${sidecar.dbPath}-wal`, `${sidecar.dbPath}-shm`, sidecar.configPath, sidecar.agentsPath, sidecar.summaryPath]) {
+        for (const file of [
+          sidecar.dbPath,
+          `${sidecar.dbPath}-wal`,
+          `${sidecar.dbPath}-shm`,
+          sidecar.configPath,
+          sidecar.preferencesPath,
+          sidecar.agentsPath,
+          sidecar.summaryPath,
+        ]) {
           if (fs.existsSync(file)) fs.rmSync(file);
         }
       }
 
       const db = new Database(sidecar.dbPath);
       initializeSchema(db);
-      const projectName = opts.name?.trim() || path.basename(rootPath);
       const ts = nowIso();
       db.prepare(`DELETE FROM projects`).run();
       db.prepare(`INSERT INTO projects (name, root_path, created_at, updated_at) VALUES (?, ?, ?, ?)`).run(projectName, rootPath, ts, ts);
@@ -203,6 +217,13 @@ program
       };
 
       fs.writeFileSync(sidecar.configPath, stringifyJson(config));
+      fs.writeFileSync(
+        sidecar.preferencesPath,
+        stringifyJson({
+          summary: { format: 'markdown', recentLimit: 8 },
+          output: { humanTime: true },
+        })
+      );
       fs.writeFileSync(sidecar.agentsPath, renderAgentsMarkdown(projectName));
 
       const db2 = new Database(sidecar.dbPath);
@@ -212,15 +233,20 @@ program
       const data = {
         rootPath,
         sidecarPath: sidecar.sidecarPath,
-        filesCreated: [sidecar.dbPath, sidecar.configPath, sidecar.agentsPath, sidecar.summaryPath],
+        projectName,
+        filesCreated: files,
         summaryGeneratedAt: refreshed.generatedAt,
         timestamp: nowIso(),
       };
 
       respondSuccess(command, Boolean(opts.json), data, [
-        'Sidecar initialized.',
-        `Project: ${projectName}`,
+        `Initialized Sidecar for project: ${projectName}`,
+        'Sidecar provides local project memory for decisions, work logs, tasks, and summaries.',
+        'Created:',
         ...data.filesCreated.map((f) => `- ${f}`),
+        '',
+        'Next step:',
+        'sidecar context',
       ]);
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);

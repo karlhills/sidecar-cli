@@ -8,6 +8,7 @@ export interface SidecarPaths {
   sidecarPath: string;
   dbPath: string;
   configPath: string;
+  preferencesPath: string;
   agentsPath: string;
   summaryPath: string;
 }
@@ -19,6 +20,7 @@ export function getSidecarPaths(rootPath: string): SidecarPaths {
     sidecarPath,
     dbPath: path.join(sidecarPath, 'sidecar.db'),
     configPath: path.join(sidecarPath, 'config.json'),
+    preferencesPath: path.join(sidecarPath, 'preferences.json'),
     agentsPath: path.join(sidecarPath, 'AGENTS.md'),
     summaryPath: path.join(sidecarPath, 'summary.md'),
   };
