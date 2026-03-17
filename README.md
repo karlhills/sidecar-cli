@@ -23,6 +23,18 @@ Sidecar is a local-first, CLI-first project memory and recording tool for human 
 
 ## Install
 
+Install globally:
+
+```bash
+npm install -g sidecar-cli
+```
+
+Or run without install:
+
+```bash
+npx sidecar-cli --help
+```
+
 Requirements:
 
 - Node.js 20+
