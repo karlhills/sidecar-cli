@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches-ignore:
+      - '**'
     tags:
       - 'v*'
 
@@ -128,8 +130,22 @@ jobs:
           files: |
             ${{ steps.pack.outputs.tarball_path }}
 
+      - name: Determine Homebrew tap update availability
+        id: tap
+        if: steps.channel.outputs.channel == 'stable'
+        env:
+          TAP_REPO: ${{ vars.HOMEBREW_TAP_REPO }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          if [ -n "${TAP_REPO}" ] && [ -n "${TAP_TOKEN}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout Homebrew tap repo
-        if: steps.channel.outputs.channel == 'stable' && vars.HOMEBREW_TAP_REPO != '' && secrets.HOMEBREW_TAP_GITHUB_TOKEN != ''
+        if: steps.channel.outputs.channel == 'stable' && steps.tap.outputs.enabled == 'true'
         uses: actions/checkout@v4
         with:
           repository: ${{ vars.HOMEBREW_TAP_REPO }}
@@ -137,7 +153,7 @@ jobs:
           path: homebrew-tap
 
       - name: Update Homebrew formula (stable only)
-        if: steps.channel.outputs.channel == 'stable' && vars.HOMEBREW_TAP_REPO != '' && secrets.HOMEBREW_TAP_GITHUB_TOKEN != ''
+        if: steps.channel.outputs.channel == 'stable' && steps.tap.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -149,7 +165,7 @@ jobs:
             --sha256 "${{ steps.checksum.outputs.sha256 }}" > homebrew-tap/Formula/sidecar.rb
 
       - name: Commit and push Homebrew formula
-        if: steps.channel.outputs.channel == 'stable' && vars.HOMEBREW_TAP_REPO != '' && secrets.HOMEBREW_TAP_GITHUB_TOKEN != ''
+        if: steps.channel.outputs.channel == 'stable' && steps.tap.outputs.enabled == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -165,5 +181,5 @@ jobs:
           git push
 
       - name: Homebrew tap not configured
-        if: steps.channel.outputs.channel == 'stable' && (vars.HOMEBREW_TAP_REPO == '' || secrets.HOMEBREW_TAP_GITHUB_TOKEN == '')
+        if: steps.channel.outputs.channel == 'stable' && steps.tap.outputs.enabled != 'true'
         run: echo "Skipping Homebrew tap update (HOMEBREW_TAP_REPO or HOMEBREW_TAP_GITHUB_TOKEN not configured)."
