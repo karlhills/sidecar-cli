@@ -42,6 +42,19 @@ async function load(key, endpoint) {
   return data;
 }
 
+async function postJson(endpoint, payload) {
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.error || 'Request failed');
+  }
+  return data;
+}
+
 function renderOverview(data) {
   if (!data?.project) {
     return '<div class="empty">No project data found in this Sidecar database.</div>';
@@ -77,6 +90,33 @@ function renderOverview(data) {
       <article class="card">
         <h3>Recent Notes</h3>
         ${list(data.recentNotes, (n) => `<li><strong>${escapeHtml(n.title || 'Note')}</strong><br><span class="muted">${escapeHtml(n.summary || '')}</span><br><span class="muted">${fmt(n.created_at)}</span></li>`)}
+      </article>
+
+      <article class="card">
+        <h3>Add Note</h3>
+        <form id="note-form">
+          <input class="input" name="title" placeholder="Title (optional)" />
+          <textarea class="textarea" name="text" placeholder="What should future you know?" required></textarea>
+          <div class="row">
+            <button class="button" type="submit">Add note</button>
+          </div>
+        </form>
+      </article>
+
+      <article class="card">
+        <h3>Add Task</h3>
+        <form id="task-form">
+          <input class="input" name="title" placeholder="Task title" required />
+          <textarea class="textarea" name="description" placeholder="Description (optional)"></textarea>
+          <div class="row">
+          <select class="select" name="priority">
+            <option value="low">low</option>
+            <option value="medium" selected>medium</option>
+            <option value="high">high</option>
+          </select>
+          <button class="button" type="submit">Add task</button>
+          </div>
+        </form>
       </article>
     </div>
   `;
@@ -150,6 +190,7 @@ async function render() {
   try {
     if (state.view === 'overview') {
       content.innerHTML = renderOverview(await load('overview', '/api/overview'));
+      attachMutations();
       return;
     }
     if (state.view === 'timeline') {
@@ -174,6 +215,48 @@ async function render() {
     }
   } catch (err) {
     content.innerHTML = `<div class="empty">Failed to load view: ${escapeHtml(err?.message || String(err))}</div>`;
+  }
+}
+
+function attachMutations() {
+  const noteForm = document.getElementById('note-form');
+  if (noteForm) {
+    noteForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = new FormData(noteForm);
+      try {
+        await postJson('/api/notes', {
+          title: form.get('title'),
+          text: form.get('text'),
+        });
+        state.cache.overview = null;
+        state.cache.timeline = null;
+        await render();
+      } catch (err) {
+        alert(`Could not add note: ${err.message}`);
+      }
+    });
+  }
+
+  const taskForm = document.getElementById('task-form');
+  if (taskForm) {
+    taskForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = new FormData(taskForm);
+      try {
+        await postJson('/api/tasks', {
+          title: form.get('title'),
+          description: form.get('description'),
+          priority: form.get('priority'),
+        });
+        state.cache.overview = null;
+        state.cache.tasks = null;
+        state.cache.timeline = null;
+        await render();
+      } catch (err) {
+        alert(`Could not add task: ${err.message}`);
+      }
+    });
   }
 }
 

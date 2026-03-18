@@ -27,11 +27,33 @@ if (!fs.existsSync(sidecarDir) || !fs.existsSync(dbPath)) {
   process.exit(1);
 }
 
-const db = new Database(dbPath, { readonly: true });
+const db = new Database(dbPath);
 
 function json(res, code, data) {
   res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(data));
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function readBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > 1024 * 1024) {
+        reject(new Error('Request body too large'));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    req.on('error', reject);
+  });
 }
 
 function readPreferences() {
@@ -111,6 +133,49 @@ function loadDecisions() {
     .all(project.id);
 }
 
+function getProjectId() {
+  const project = db.prepare('SELECT id FROM projects ORDER BY id LIMIT 1').get();
+  return project?.id ?? null;
+}
+
+const addNoteTx = db.transaction((projectId, title, text) => {
+  const ts = nowIso();
+  const info = db
+    .prepare(
+      `INSERT INTO events (project_id, type, title, summary, details_json, created_at, created_by, source, session_id)
+       VALUES (?, 'note', ?, ?, ?, ?, 'human', 'generated', NULL)`
+    )
+    .run(projectId, title, text, JSON.stringify({ text }), ts);
+  return Number(info.lastInsertRowid);
+});
+
+const addTaskTx = db.transaction((projectId, title, description, priority) => {
+  const ts = nowIso();
+  const taskInfo = db
+    .prepare(
+      `INSERT INTO tasks (project_id, title, description, status, priority, created_at, updated_at, closed_at, origin_event_id)
+       VALUES (?, ?, ?, 'open', ?, ?, ?, NULL, NULL)`
+    )
+    .run(projectId, title, description ?? null, priority, ts, ts);
+
+  const taskId = Number(taskInfo.lastInsertRowid);
+  const eventInfo = db
+    .prepare(
+      `INSERT INTO events (project_id, type, title, summary, details_json, created_at, created_by, source, session_id)
+       VALUES (?, 'task_created', ?, ?, ?, ?, 'human', 'generated', NULL)`
+    )
+    .run(
+      projectId,
+      `Task #${taskId} created`,
+      title,
+      JSON.stringify({ taskId, description: description ?? null, priority }),
+      ts
+    );
+  const eventId = Number(eventInfo.lastInsertRowid);
+  db.prepare(`UPDATE tasks SET origin_event_id = ? WHERE id = ?`).run(eventId, taskId);
+  return { taskId, eventId };
+});
+
 function serveFile(res, filePath) {
   if (!fs.existsSync(filePath)) {
     res.writeHead(404);
@@ -134,12 +199,45 @@ const server = http.createServer((req, res) => {
   try {
     const url = new URL(req.url || '/', `http://localhost:${port}`);
 
-    if (url.pathname === '/api/overview') return json(res, 200, loadOverview());
-    if (url.pathname === '/api/timeline') return json(res, 200, loadTimeline());
-    if (url.pathname === '/api/tasks') return json(res, 200, loadTasks());
-    if (url.pathname === '/api/decisions') return json(res, 200, loadDecisions());
-    if (url.pathname === '/api/preferences') return json(res, 200, readPreferences());
-    if (url.pathname === '/api/summary') return json(res, 200, { markdown: readSummary() });
+    if (url.pathname === '/api/notes' && req.method === 'POST') {
+      readBody(req)
+        .then((raw) => {
+          const body = raw ? JSON.parse(raw) : {};
+          const text = String(body.text ?? '').trim();
+          const title = String(body.title ?? '').trim() || 'Note';
+          if (!text) return json(res, 400, { error: 'text is required' });
+          const projectId = getProjectId();
+          if (!projectId) return json(res, 400, { error: 'project not found' });
+          const eventId = addNoteTx(projectId, title, text);
+          return json(res, 201, { ok: true, eventId });
+        })
+        .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
+      return;
+    }
+
+    if (url.pathname === '/api/tasks' && req.method === 'POST') {
+      readBody(req)
+        .then((raw) => {
+          const body = raw ? JSON.parse(raw) : {};
+          const title = String(body.title ?? '').trim();
+          const description = String(body.description ?? '').trim() || null;
+          const priority = ['low', 'medium', 'high'].includes(body.priority) ? body.priority : 'medium';
+          if (!title) return json(res, 400, { error: 'title is required' });
+          const projectId = getProjectId();
+          if (!projectId) return json(res, 400, { error: 'project not found' });
+          const result = addTaskTx(projectId, title, description, priority);
+          return json(res, 201, { ok: true, ...result });
+        })
+        .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/api/overview') return json(res, 200, loadOverview());
+    if (req.method === 'GET' && url.pathname === '/api/timeline') return json(res, 200, loadTimeline());
+    if (req.method === 'GET' && url.pathname === '/api/tasks') return json(res, 200, loadTasks());
+    if (req.method === 'GET' && url.pathname === '/api/decisions') return json(res, 200, loadDecisions());
+    if (req.method === 'GET' && url.pathname === '/api/preferences') return json(res, 200, readPreferences());
+    if (req.method === 'GET' && url.pathname === '/api/summary') return json(res, 200, { markdown: readSummary() });
 
     if (url.pathname === '/' || url.pathname === '/index.html') {
       return serveFile(res, path.join(publicDir, 'index.html'));

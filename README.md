@@ -256,6 +256,11 @@ Initial UI screens:
 - Decisions: decision records with summary and timestamps
 - Preferences: `.sidecar/preferences.json` and `.sidecar/summary.md`
 
+UI write support (v1):
+
+- Add notes from Overview
+- Add open tasks from Overview
+
 ## JSON output
 
 Most commands support `--json` and return structured output:
