@@ -21,6 +21,13 @@ export function getCapabilitiesManifest(version: string) {
         options: ['--json'],
       },
       {
+        name: 'ui',
+        description: 'Launch optional local Sidecar UI (lazy-installed on first run)',
+        json_output: false,
+        arguments: [],
+        options: ['--no-open', '--port <port>', '--install-only', '--project <path>', '--reinstall'],
+      },
+      {
         name: 'capabilities',
         description: 'Show machine-readable CLI manifest',
         json_output: true,

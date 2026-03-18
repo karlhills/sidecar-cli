@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sidecar UI</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="mark">[■]─[▪] <span>sidecar</span></div>
+      <div class="tagline">project memory for your work</div>
+    </header>
+
+    <main class="layout">
+      <aside class="nav">
+        <button data-view="overview" class="nav-btn active">Overview</button>
+        <button data-view="timeline" class="nav-btn">Timeline</button>
+        <button data-view="tasks" class="nav-btn">Tasks</button>
+        <button data-view="decisions" class="nav-btn">Decisions</button>
+        <button data-view="preferences" class="nav-btn">Preferences</button>
+      </aside>
+
+      <section id="content" class="content">
+        <div class="loading">Loading Sidecar project data...</div>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

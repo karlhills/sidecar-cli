@@ -103,6 +103,7 @@ Global:
 
 - `sidecar init [--force] [--name <project-name>] [--json]`
 - `sidecar status [--json]`
+- `sidecar ui [--no-open] [--port <port>] [--install-only] [--project <path>] [--reinstall]`
 - `sidecar capabilities --json`
 - `sidecar help`
 
@@ -215,6 +216,45 @@ Primary tables:
 - `artifacts`
 
 No network dependency is required for normal operation.
+
+## Optional local UI
+
+`sidecar ui` launches a local browser UI for the selected Sidecar project.
+
+Lazy-install behavior:
+
+1. `sidecar ui` resolves the nearest `.sidecar` project root (or uses `--project`).
+2. Sidecar checks for `@sidecar/ui` in `~/.sidecar/ui`.
+3. If missing/incompatible, Sidecar installs or updates it automatically.
+4. Sidecar starts a local UI server and opens the browser (unless `--no-open`).
+
+UI runtime location:
+
+- `~/.sidecar/ui`
+- the CLI installs `@sidecar/ui` here (not in your project repo)
+
+Version compatibility rule:
+
+- CLI and UI must share the same major version.
+- If majors differ, `sidecar ui` auto-reinstalls/updates UI.
+
+Common examples:
+
+```bash
+sidecar ui
+sidecar ui --no-open --port 4311
+sidecar ui --install-only
+sidecar ui --project ../other-repo
+sidecar ui --reinstall
+```
+
+Initial UI screens:
+
+- Overview: project info, active session, recent decisions/worklogs, open tasks, recent notes
+- Timeline: recent events in chronological order
+- Tasks: open and completed tasks
+- Decisions: decision records with summary and timestamps
+- Preferences: `.sidecar/preferences.json` and `.sidecar/summary.md`
 
 ## JSON output
 

@@ -5,12 +5,13 @@ import { Command } from 'commander';
 import Database from 'better-sqlite3';
 import { z } from 'zod';
 import { initializeSchema } from './db/schema.js';
-import { getSidecarPaths } from './lib/paths.js';
+import { findSidecarRoot, getSidecarPaths } from './lib/paths.js';
 import { nowIso, humanTime, stringifyJson } from './lib/format.js';
 import { SidecarError } from './lib/errors.js';
 import { jsonFailure, jsonSuccess, printJsonEnvelope } from './lib/output.js';
 import { bannerDisabled, renderBanner } from './lib/banner.js';
 import { getUpdateNotice } from './lib/update-check.js';
+import { ensureUiInstalled, launchUiServer } from './lib/ui.js';
 import { requireInitialized } from './db/client.js';
 import { renderAgentsMarkdown, renderClaudeMarkdown } from './templates/agents.js';
 import { refreshSummaryFile } from './services/summary-service.js';
@@ -180,6 +181,15 @@ function renderContextMarkdown(data: ReturnType<typeof buildContext>): string {
   return lines.join('\n');
 }
 
+function resolveProjectRoot(projectPath?: string): string {
+  const basePath = projectPath ? path.resolve(projectPath) : process.cwd();
+  const root = findSidecarRoot(basePath);
+  if (!root) {
+    throw new SidecarError(NOT_INITIALIZED_MSG);
+  }
+  return root;
+}
+
 const program = new Command();
 program.name('sidecar').description('Local-first project memory and recording CLI').version(pkg.version);
 program.option('--no-banner', 'Disable Sidecar banner output');
@@ -198,6 +208,61 @@ function maybePrintUpdateNotice(): void {
   console.log(`Update available: ${pkg.version} -> ${notice.latestVersion}`);
   console.log(`Run: npm install -g sidecar-cli@${installTag}`);
 }
+
+program
+  .command('ui')
+  .description('Launch the optional local Sidecar UI')
+  .option('--no-open', 'Do not open the browser automatically')
+  .option('--port <port>', 'Port to run the UI on', (v) => Number.parseInt(v, 10), 4310)
+  .option('--install-only', 'Install/update UI package but do not launch')
+  .option('--project <path>', 'Project path (defaults to nearest Sidecar root)')
+  .option('--reinstall', 'Force reinstall UI package')
+  .addHelpText(
+    'after',
+    '\nExamples:\n  $ sidecar ui\n  $ sidecar ui --no-open --port 4311\n  $ sidecar ui --project ../my-repo --install-only'
+  )
+  .action((opts) => {
+    const command = 'ui';
+    try {
+      const projectRoot = resolveProjectRoot(opts.project);
+      const port = Number(opts.port);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        fail('Port must be an integer between 1 and 65535');
+      }
+
+      if (!bannerDisabled()) {
+        console.log(renderBanner());
+        console.log('');
+      }
+
+      console.log('Launching Sidecar UI');
+      console.log(`Project: ${projectRoot}`);
+
+      const { installedVersion } = ensureUiInstalled({
+        cliVersion: pkg.version,
+        reinstall: Boolean(opts.reinstall),
+        onStatus: (line) => console.log(line),
+      });
+      console.log(`UI version: ${installedVersion}`);
+
+      if (opts.installOnly) {
+        console.log('Install-only mode complete.');
+        return;
+      }
+
+      const { url } = launchUiServer({
+        projectPath: projectRoot,
+        port,
+        openBrowser: opts.open !== false,
+      });
+      console.log(`URL: ${url}`);
+      if (opts.open === false) {
+        console.log('Browser auto-open disabled.');
+      }
+    } catch (err) {
+      handleCommandError(command, false, err);
+    }
+  });
 
 program
   .command('init')

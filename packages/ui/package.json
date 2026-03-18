@@ -1,0 +1,20 @@
+{
+  "name": "@sidecar/ui",
+  "version": "0.1.1-beta.1",
+  "description": "Optional local UI for Sidecar",
+  "type": "module",
+  "private": false,
+  "bin": {
+    "sidecar-ui-server": "server.js"
+  },
+  "files": [
+    "server.js",
+    "public"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.8.0"
+  }
+}
