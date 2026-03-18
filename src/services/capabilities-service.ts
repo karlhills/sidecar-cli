@@ -1,10 +1,18 @@
+import { JSON_CONTRACT_VERSION } from '../lib/output.js';
+
 export function getCapabilitiesManifest(version: string) {
   return {
-    schema_version: 1,
-    cli: {
-      name: 'sidecar',
-      version,
-    },
+    cli_name: 'sidecar',
+    cli_version: version,
+    json_contract_version: JSON_CONTRACT_VERSION,
+    features: [
+      'json_envelope_v1',
+      'capabilities_manifest',
+      'event_ingest',
+      'export_json',
+      'export_jsonl_events',
+      'optional_local_ui',
+    ],
     commands: [
       {
         name: 'init',
@@ -19,6 +27,22 @@ export function getCapabilitiesManifest(version: string) {
         json_output: true,
         arguments: [],
         options: ['--json'],
+      },
+      {
+        name: 'preferences',
+        description: 'Preferences operations',
+        json_output: true,
+        arguments: [],
+        options: [],
+        subcommands: [
+          {
+            name: 'show',
+            description: 'Show project preferences',
+            json_output: true,
+            arguments: [],
+            options: ['--json'],
+          },
+        ],
       },
       {
         name: 'ui',
@@ -40,6 +64,40 @@ export function getCapabilitiesManifest(version: string) {
         json_output: true,
         arguments: [],
         options: ['--limit <n>', '--format text|markdown|json', '--json'],
+      },
+      {
+        name: 'event',
+        description: 'Generic event ingest operations',
+        json_output: true,
+        arguments: [],
+        options: [],
+        subcommands: [
+          {
+            name: 'add',
+            description: 'Add a validated generic event payload',
+            json_output: true,
+            arguments: [],
+            options: [
+              '--type <type>',
+              '--title <title>',
+              '--summary <summary>',
+              '--details-json <json>',
+              '--created-by <by>',
+              '--source <source>',
+              '--session-id <id>',
+              '--json-input <json>',
+              '--stdin',
+              '--json',
+            ],
+          },
+        ],
+      },
+      {
+        name: 'export',
+        description: 'Export project memory in JSON or JSONL',
+        json_output: true,
+        arguments: [],
+        options: ['--format json|jsonl', '--limit <n>', '--type <event-type>', '--since <iso-date>', '--until <iso-date>', '--output <path>', '--json'],
       },
       {
         name: 'summary',

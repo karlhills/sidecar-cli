@@ -21,6 +21,8 @@ import { addArtifact, listArtifacts } from './services/artifact-service.js';
 import { addDecision, addNote, addWorklog, getActiveSessionId, listRecentEvents } from './services/event-service.js';
 import { addTask, listTasks, markTaskDone } from './services/task-service.js';
 import { currentSession, endSession, startSession, verifySessionHygiene } from './services/session-service.js';
+import { eventIngestSchema, ingestEvent } from './services/event-ingest-service.js';
+import { buildExportJson, buildExportJsonlEvents, writeOutputFile } from './services/export-service.js';
 import type { ActorType, ArtifactKind, SidecarConfig, TaskPriority } from './types/models.js';
 
 const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
@@ -29,6 +31,7 @@ const actorSchema = z.enum(['human', 'agent']);
 const taskPrioritySchema = z.enum(['low', 'medium', 'high']);
 const artifactKindSchema = z.enum(['file', 'doc', 'screenshot', 'other']);
 const taskStatusSchema = z.enum(['open', 'done', 'all']);
+const exportFormatSchema = z.enum(['json', 'jsonl']);
 
 const NOT_INITIALIZED_MSG = 'Sidecar is not initialized in this directory or any parent directory';
 
@@ -179,6 +182,14 @@ function renderContextMarkdown(data: ReturnType<typeof buildContext>): string {
     lines.push(`- ${art.kind}: ${art.path}${art.note ? ` - ${art.note}` : ''}`);
   }
   return lines.join('\n');
+}
+
+async function readStdinText(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+  }
+  return Buffer.concat(chunks).toString('utf8');
 }
 
 function resolveProjectRoot(projectPath?: string): string {
@@ -401,7 +412,7 @@ program
       const recent = db.prepare(`SELECT type, title, created_at FROM events WHERE project_id = ? ORDER BY created_at DESC LIMIT 5`).all(projectId);
       db.close();
 
-      const data = { initialized: true, project, counts, recent };
+      const data = { project, counts, recent_events: recent };
       respondSuccess(command, Boolean(opts.json), data, [
         `Project: ${(project as { name: string }).name}`,
         `Root: ${(project as { root_path: string }).root_path}`,
@@ -420,6 +431,29 @@ program
     }
   });
 
+const preferences = program.command('preferences').description('Preferences commands');
+preferences
+  .command('show')
+  .description('Show project preferences')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText('after', '\nExamples:\n  $ sidecar preferences show\n  $ sidecar preferences show --json')
+  .action((opts) => {
+    const command = 'preferences show';
+    try {
+      const { rootPath } = requireInitialized();
+      const prefsPath = getSidecarPaths(rootPath).preferencesPath;
+      const preferencesData = fs.existsSync(prefsPath) ? JSON.parse(fs.readFileSync(prefsPath, 'utf8')) : {};
+      respondSuccess(
+        command,
+        Boolean(opts.json),
+        { project: { root_path: rootPath }, preferences: preferencesData, path: prefsPath },
+        [`Preferences path: ${prefsPath}`, stringifyJson(preferencesData)]
+      );
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
 program
   .command('capabilities')
   .description('Output a machine-readable manifest of Sidecar commands')
@@ -430,6 +464,129 @@ program
     const manifest = getCapabilitiesManifest(pkg.version);
     if (opts.json) printJsonEnvelope(jsonSuccess(command, manifest));
     else console.log(stringifyJson(manifest));
+  });
+
+const event = program.command('event').description('Generic event ingest commands');
+event
+  .command('add')
+  .description('Add a validated generic Sidecar event')
+  .option('--type <type>', 'note|decision|worklog|task_created|task_completed|summary_generated')
+  .option('--title <title>', 'Event title')
+  .option('--summary <summary>', 'Event summary')
+  .option('--details-json <json>', 'JSON object for details_json')
+  .option('--created-by <by>', 'human|agent|system')
+  .option('--source <source>', 'cli|imported|generated')
+  .option('--session-id <id>', 'Optional session id', (v) => Number.parseInt(v, 10))
+  .option('--json-input <json>', 'Raw JSON event payload')
+  .option('--stdin', 'Read JSON event payload from stdin')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText(
+    'after',
+    '\nExamples:\n  $ sidecar event add --type note --summary "Captured context"\n  $ sidecar event add --json-input \'{"type":"decision","title":"Use SQLite","summary":"Local-first"}\' --json\n  $ cat event.json | sidecar event add --stdin --json'
+  )
+  .action(async (opts) => {
+    const command = 'event add';
+    try {
+      const payloadSources = [Boolean(opts.jsonInput), Boolean(opts.stdin), Boolean(opts.type || opts.title || opts.summary || opts.detailsJson || opts.createdBy || opts.source || opts.sessionId)];
+      if (payloadSources.filter(Boolean).length !== 1) {
+        fail('Provide exactly one payload source: structured flags OR --json-input OR --stdin');
+      }
+
+      let payloadRaw: unknown;
+      if (opts.jsonInput) {
+        payloadRaw = JSON.parse(opts.jsonInput);
+      } else if (opts.stdin) {
+        const raw = (await readStdinText()).trim();
+        if (!raw) fail('STDIN payload is empty');
+        payloadRaw = JSON.parse(raw);
+      } else {
+        payloadRaw = {
+          type: opts.type,
+          title: opts.title,
+          summary: opts.summary,
+          details_json: opts.detailsJson ? JSON.parse(opts.detailsJson) : undefined,
+          created_by: opts.createdBy,
+          source: opts.source,
+          session_id: Number.isInteger(opts.sessionId) ? opts.sessionId : undefined,
+        };
+      }
+
+      const payload = eventIngestSchema.parse(payloadRaw);
+      const { db, projectId } = requireInitialized();
+      const created = ingestEvent(db, { project_id: projectId, payload });
+      db.close();
+
+      respondSuccess(
+        command,
+        Boolean(opts.json),
+        { event: { ...created, created_at: nowIso() } },
+        [`Recorded ${created.type} event #${created.id}.`]
+      );
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
+program
+  .command('export')
+  .description('Export project memory in JSON or JSONL')
+  .option('--format <format>', 'json|jsonl', 'json')
+  .option('--limit <n>', 'Limit exported events', (v) => Number.parseInt(v, 10))
+  .option('--type <event-type>', 'Filter exported events by type')
+  .option('--since <iso-date>', 'Filter events created_at >= since')
+  .option('--until <iso-date>', 'Filter events created_at <= until')
+  .option('--output <path>', 'Write export to file path instead of stdout')
+  .option('--json', 'Wrap command metadata in JSON envelope when writing to file')
+  .addHelpText(
+    'after',
+    '\nExamples:\n  $ sidecar export --format json\n  $ sidecar export --format jsonl --output sidecar-events.jsonl\n  $ sidecar export --type decision --since 2026-01-01T00:00:00Z'
+  )
+  .action((opts) => {
+    const command = 'export';
+    try {
+      const format = exportFormatSchema.parse(opts.format);
+      if (opts.since && Number.isNaN(Date.parse(opts.since))) fail('--since must be a valid ISO date');
+      if (opts.until && Number.isNaN(Date.parse(opts.until))) fail('--until must be a valid ISO date');
+
+      const { db, projectId, rootPath } = requireInitialized();
+      if (format === 'json') {
+        const payload = buildExportJson(db, {
+          projectId,
+          rootPath,
+          limit: opts.limit,
+          type: opts.type,
+          since: opts.since,
+          until: opts.until,
+        });
+        db.close();
+        const rendered = stringifyJson(payload);
+        if (opts.output) {
+          const filePath = writeOutputFile(opts.output, `${rendered}\n`);
+          respondSuccess(command, Boolean(opts.json), { format, output_path: filePath }, [`Export written: ${filePath}`]);
+        } else {
+          console.log(rendered);
+        }
+        return;
+      }
+
+      const lines = buildExportJsonlEvents(db, {
+        projectId,
+        limit: opts.limit,
+        type: opts.type,
+        since: opts.since,
+        until: opts.until,
+      });
+      db.close();
+      const rendered = `${lines.join('\n')}${lines.length > 0 ? '\n' : ''}`;
+      if (opts.output) {
+        const filePath = writeOutputFile(opts.output, rendered);
+        respondSuccess(command, Boolean(opts.json), { format, output_path: filePath, records: lines.length }, [`Export written: ${filePath}`]);
+      } else {
+        process.stdout.write(rendered);
+      }
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
   });
 
 program
@@ -478,7 +635,7 @@ summary
       const out = refreshSummaryFile(db, rootPath, projectId, Math.max(1, opts.limit));
       db.close();
 
-      respondSuccess(command, Boolean(opts.json), { ...out, timestamp: nowIso() }, ['Summary refreshed.', `Path: ${out.path}`]);
+      respondSuccess(command, Boolean(opts.json), { summary: { path: out.path, generated_at: out.generatedAt } }, ['Summary refreshed.', `Path: ${out.path}`]);
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }
@@ -497,7 +654,7 @@ program
       const { db, projectId } = requireInitialized();
       const rows = listRecentEvents(db, { projectId, type: opts.type, limit: Math.max(1, opts.limit) });
       db.close();
-      if (opts.json) printJsonEnvelope(jsonSuccess(command, rows));
+      if (opts.json) printJsonEnvelope(jsonSuccess(command, { events: rows }));
       else {
         if ((rows as unknown[]).length === 0) {
           console.log('No events found.');
@@ -529,7 +686,12 @@ program
       const sessionId = maybeSessionId(db, projectId, opts.session);
       const eventId = addNote(db, { projectId, text, title: opts.title, by, sessionId });
       db.close();
-      respondSuccess(command, Boolean(opts.json), { eventId, timestamp: nowIso() }, [`Recorded note event #${eventId}.`]);
+      respondSuccess(
+        command,
+        Boolean(opts.json),
+        { event: { id: eventId, type: 'note', title: opts.title?.trim() || 'Note', summary: text, created_by: by, session_id: sessionId, created_at: nowIso() } },
+        [`Recorded note event #${eventId}.`]
+      );
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }
@@ -557,7 +719,12 @@ decision
       const sessionId = maybeSessionId(db, projectId, opts.session);
       const eventId = addDecision(db, { projectId, title: opts.title, summary: opts.summary, details: opts.details, by, sessionId });
       db.close();
-      respondSuccess(command, Boolean(opts.json), { eventId, timestamp: nowIso() }, [`Recorded decision event #${eventId}.`]);
+      respondSuccess(
+        command,
+        Boolean(opts.json),
+        { event: { id: eventId, type: 'decision', title: opts.title, summary: opts.summary, created_by: by, session_id: sessionId, created_at: nowIso() } },
+        [`Recorded decision event #${eventId}.`]
+      );
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }
@@ -601,7 +768,7 @@ worklog
       }
 
       db.close();
-      respondSuccess(command, Boolean(opts.json), { ...result, timestamp: nowIso() }, [
+      respondSuccess(command, Boolean(opts.json), { event: { id: result.eventId, type: 'worklog', summary: opts.done, created_by: by, session_id: sessionId, created_at: nowIso() }, artifacts: result.files.map((p) => ({ path: p, kind: 'file' })) }, [
         `Recorded worklog event #${result.eventId}.`,
         `Artifacts linked: ${result.files.length}`,
       ]);
@@ -627,7 +794,12 @@ task
       const { db, projectId } = requireInitialized();
       const result = addTask(db, { projectId, title, description: opts.description, priority, by });
       db.close();
-      respondSuccess(command, Boolean(opts.json), { ...result, timestamp: nowIso() }, [`Added task #${result.taskId}.`]);
+      respondSuccess(
+        command,
+        Boolean(opts.json),
+        { task: { id: result.taskId, title, description: opts.description ?? null, status: 'open', priority }, event: { id: result.eventId, type: 'task_created' } },
+        [`Added task #${result.taskId}.`]
+      );
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }
@@ -649,7 +821,7 @@ task
       const result = markTaskDone(db, { projectId, taskId, by });
       db.close();
       if (!result.ok) fail(result.reason);
-      respondSuccess(command, Boolean(opts.json), { taskId, eventId: result.eventId, timestamp: nowIso() }, [`Completed task #${taskId}.`]);
+      respondSuccess(command, Boolean(opts.json), { task: { id: taskId, status: 'done' }, event: { id: result.eventId, type: 'task_completed' } }, [`Completed task #${taskId}.`]);
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }
@@ -671,7 +843,7 @@ task
       db.close();
 
       if (opts.format === 'json' || opts.json) {
-        if (opts.json) printJsonEnvelope(jsonSuccess(command, rows));
+        if (opts.json) printJsonEnvelope(jsonSuccess(command, { status, tasks: rows }));
         else console.log(stringifyJson(rows));
         return;
       }
@@ -714,7 +886,7 @@ session
       const result = startSession(db, { projectId, actor, name: opts.name });
       db.close();
       if (!result.ok) fail(result.reason);
-      respondSuccess(command, Boolean(opts.json), { ...result, timestamp: nowIso() }, [`Started session #${result.sessionId}.`]);
+      respondSuccess(command, Boolean(opts.json), { session: { id: result.sessionId, actor_type: actor, actor_name: opts.name ?? null, started_at: nowIso() } }, [`Started session #${result.sessionId}.`]);
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }
@@ -733,7 +905,7 @@ session
       const result = endSession(db, { projectId, summary: opts.summary });
       db.close();
       if (!result.ok) fail(result.reason);
-      respondSuccess(command, Boolean(opts.json), { ...result, timestamp: nowIso() }, [`Ended session #${result.sessionId}.`]);
+      respondSuccess(command, Boolean(opts.json), { session: { id: result.sessionId, ended_at: nowIso(), summary: opts.summary ?? null } }, [`Ended session #${result.sessionId}.`]);
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }
@@ -750,7 +922,7 @@ session
       const { db, projectId } = requireInitialized();
       const current = currentSession(db, projectId);
       db.close();
-      if (opts.json) printJsonEnvelope(jsonSuccess(command, { current: current ?? null }));
+      if (opts.json) printJsonEnvelope(jsonSuccess(command, { session: current ?? null }));
       else if (!current) {
         console.log('No active session.');
       } else {
@@ -813,7 +985,7 @@ artifact
       const { db, projectId } = requireInitialized();
       const artifactId = addArtifact(db, { projectId, path: artifactPath, kind, note: opts.note });
       db.close();
-      respondSuccess(command, Boolean(opts.json), { artifactId, timestamp: nowIso() }, [`Added artifact #${artifactId}.`]);
+      respondSuccess(command, Boolean(opts.json), { artifact: { id: artifactId, path: artifactPath, kind, note: opts.note ?? null, created_at: nowIso() } }, [`Added artifact #${artifactId}.`]);
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }
@@ -830,7 +1002,7 @@ artifact
       const { db, projectId } = requireInitialized();
       const rows = listArtifacts(db, projectId);
       db.close();
-      if (opts.json) printJsonEnvelope(jsonSuccess(command, rows));
+      if (opts.json) printJsonEnvelope(jsonSuccess(command, { artifacts: rows }));
       else {
         if ((rows as unknown[]).length === 0) {
           console.log('No artifacts found.');

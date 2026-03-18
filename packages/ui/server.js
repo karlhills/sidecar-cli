@@ -65,6 +65,11 @@ function readPreferences() {
   }
 }
 
+function writePreferences(preferences) {
+  const safe = preferences && typeof preferences === 'object' ? preferences : {};
+  fs.writeFileSync(prefsPath, JSON.stringify(safe, null, 2) + '\n');
+}
+
 function readSummary() {
   if (!fs.existsSync(summaryPath)) return '';
   try {
@@ -227,6 +232,20 @@ const server = http.createServer((req, res) => {
           if (!projectId) return json(res, 400, { error: 'project not found' });
           const result = addTaskTx(projectId, title, description, priority);
           return json(res, 201, { ok: true, ...result });
+        })
+        .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
+      return;
+    }
+
+    if (url.pathname === '/api/preferences' && req.method === 'PUT') {
+      readBody(req)
+        .then((raw) => {
+          const body = raw ? JSON.parse(raw) : {};
+          if (!body || typeof body !== 'object' || Array.isArray(body)) {
+            return json(res, 400, { error: 'preferences payload must be a JSON object' });
+          }
+          writePreferences(body);
+          return json(res, 200, { ok: true });
         })
         .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
       return;

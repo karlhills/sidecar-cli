@@ -205,6 +205,17 @@ pre.code {
   border-color: #3b4d66;
 }
 
+.button.secondary {
+  background: var(--panel-2);
+}
+
+.help {
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 @media (max-width: 900px) {
   .layout {
     grid-template-columns: 1fr;

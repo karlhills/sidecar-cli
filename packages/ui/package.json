@@ -1,6 +1,6 @@
 {
   "name": "@sidecar/ui",
-  "version": "0.1.1-beta.2",
+  "version": "0.1.1-beta.3",
   "description": "Optional local UI for Sidecar",
   "type": "module",
   "private": false,

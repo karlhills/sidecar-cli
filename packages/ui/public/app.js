@@ -55,6 +55,19 @@ async function postJson(endpoint, payload) {
   return data;
 }
 
+async function putJson(endpoint, payload) {
+  const res = await fetch(endpoint, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data?.error || 'Request failed');
+  }
+  return data;
+}
+
 function renderOverview(data) {
   if (!data?.project) {
     return '<div class="empty">No project data found in this Sidecar database.</div>';
@@ -171,11 +184,22 @@ function renderDecisions(items) {
 }
 
 function renderPreferences(data, summary) {
+  const prefsText = JSON.stringify(data ?? {}, null, 2);
   return `
     <div class="grid">
       <article class="card">
         <h3>Preferences</h3>
-        <pre class="code">${escapeHtml(JSON.stringify(data ?? {}, null, 2))}</pre>
+        <textarea id="preferences-editor" class="textarea" style="min-height:240px;">${escapeHtml(prefsText)}</textarea>
+        <div class="row">
+          <button id="preferences-save" class="button" type="button">Save preferences</button>
+          <button id="preferences-reload" class="button secondary" type="button">Reload</button>
+        </div>
+        <div class="help">
+          Supported keys (examples):<br />
+          <code>summary.format</code>: <code>"markdown" | "text" | "json"</code><br />
+          <code>summary.recentLimit</code>: number of recent items for summaries<br />
+          <code>output.humanTime</code>: <code>true | false</code> (friendly local timestamps in human CLI output vs raw ISO-style timestamps)
+        </div>
       </article>
       <article class="card">
         <h3>Summary.md</h3>
@@ -211,6 +235,7 @@ async function render() {
         load('summary', '/api/summary'),
       ]);
       content.innerHTML = renderPreferences(preferences, summary);
+      attachPreferencesMutations();
       return;
     }
   } catch (err) {
@@ -258,6 +283,34 @@ function attachMutations() {
       }
     });
   }
+}
+
+function attachPreferencesMutations() {
+  const save = document.getElementById('preferences-save');
+  const reload = document.getElementById('preferences-reload');
+  const editor = document.getElementById('preferences-editor');
+  if (!(save && reload && editor)) return;
+
+  save.addEventListener('click', async () => {
+    try {
+      const parsed = JSON.parse(editor.value || '{}');
+      await putJson('/api/preferences', parsed);
+      state.cache.preferences = parsed;
+      alert('Preferences saved.');
+    } catch (err) {
+      alert(`Could not save preferences: ${err.message}`);
+    }
+  });
+
+  reload.addEventListener('click', async () => {
+    try {
+      state.cache.preferences = null;
+      const prefs = await load('preferences', '/api/preferences');
+      editor.value = JSON.stringify(prefs ?? {}, null, 2);
+    } catch (err) {
+      alert(`Could not reload preferences: ${err.message}`);
+    }
+  });
 }
 
 render();
