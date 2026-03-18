@@ -1,6 +1,6 @@
 {
   "name": "sidecar-cli",
-  "version": "0.1.1-rc.1",
+  "version": "0.1.2",
   "description": "Local-first project memory and recording tool",
   "scripts": {
     "build": "npm run clean && tsc -p tsconfig.json",
