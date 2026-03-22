@@ -320,6 +320,211 @@ function renderSimpleTable(items, cols) {
   `;
 }
 
+function renderOverview(data) {
+  if (!data?.project) return '<div class="empty">No project data found in this Sidecar database.</div>';
+
+  const openTasks = data.openTasks || [];
+  const highPriorityOpen = openTasks.filter((t) => String(t.priority || '').toLowerCase() === 'high').length;
+  const activeSessionText = data.activeSession
+    ? `${data.activeSession.actor_type}${data.activeSession.actor_name ? ` · ${data.activeSession.actor_name}` : ''}`
+    : 'none';
+
+  const compactList = (rows, emptyLabel, renderRow) =>
+    rows?.length ? `<div class="overview-list">${rows.map(renderRow).join('')}</div>` : `<div class="empty small">${escapeHtml(emptyLabel)}</div>`;
+
+  return `
+    <div class="overview-shell">
+      <article class="card overview-hero">
+        <div class="overview-hero-head">
+          <div>
+            <h3>Project Overview</h3>
+            <div class="overview-project-name">${escapeHtml(data.project.name)}</div>
+            <div class="overview-project-path">${escapeHtml(data.project.root_path)}</div>
+          </div>
+          <div class="overview-session ${data.activeSession ? 'live' : ''}">
+            <span class="dot"></span>
+            Active session: ${escapeHtml(activeSessionText)}
+          </div>
+        </div>
+      </article>
+
+      <section class="overview-stats">
+        <article class="card stat-card">
+          <div class="stat-label">Open Tasks</div>
+          <div class="stat-value">${openTasks.length}</div>
+          <div class="stat-sub">${highPriorityOpen} high priority</div>
+        </article>
+        <article class="card stat-card">
+          <div class="stat-label">Recent Decisions</div>
+          <div class="stat-value">${(data.recentDecisions || []).length}</div>
+          <div class="stat-sub">last recorded choices</div>
+        </article>
+        <article class="card stat-card">
+          <div class="stat-label">Recent Worklogs</div>
+          <div class="stat-value">${(data.recentWorklogs || []).length}</div>
+          <div class="stat-sub">progress updates</div>
+        </article>
+        <article class="card stat-card">
+          <div class="stat-label">Recent Notes</div>
+          <div class="stat-value">${(data.recentNotes || []).length}</div>
+          <div class="stat-sub">context capture</div>
+        </article>
+      </section>
+
+      <section class="overview-main overview-main-top">
+        <article class="card">
+          <h3>Open Tasks</h3>
+          ${compactList(
+            openTasks,
+            'No open tasks.',
+            (t) => `
+              <div class="overview-item">
+                <div class="overview-item-head">
+                  <span><strong>#${t.id}</strong> ${escapeHtml(t.title)}</span>
+                  <span class="priority-pill priority-${escapeHtml((t.priority || 'none').toLowerCase())}">${escapeHtml(t.priority || 'n/a')}</span>
+                </div>
+                <div class="overview-item-meta">${fmt(t.updated_at)}</div>
+              </div>
+            `
+          )}
+        </article>
+
+        <article class="card">
+          <h3>Recent Decisions</h3>
+          ${compactList(
+            data.recentDecisions || [],
+            'No decisions recorded yet.',
+            (r) => `
+              <div class="overview-item">
+                <div class="overview-item-head"><strong>${escapeHtml(r.title || 'Decision')}</strong></div>
+                <div class="overview-item-summary">${escapeHtml(r.summary || '')}</div>
+                <div class="overview-item-meta">${fmt(r.created_at)}</div>
+              </div>
+            `
+          )}
+        </article>
+        <article class="card">
+          <h3>Recent Worklogs</h3>
+          ${compactList(
+            data.recentWorklogs || [],
+            'No worklogs recorded yet.',
+            (r) => `
+              <div class="overview-item">
+                <div class="overview-item-head"><strong>${escapeHtml(r.title || 'Worklog')}</strong></div>
+                <div class="overview-item-summary">${escapeHtml(r.summary || '')}</div>
+                <div class="overview-item-meta">${fmt(r.created_at)}</div>
+              </div>
+            `
+          )}
+        </article>
+      </section>
+
+      <section class="overview-main overview-main-bottom">
+        <article class="card">
+          <h3>Recent Notes</h3>
+          ${compactList(
+            data.recentNotes || [],
+            'No notes recorded yet.',
+            (n) => `
+              <div class="overview-item">
+                <div class="overview-item-head"><strong>${escapeHtml(n.title || 'Note')}</strong></div>
+                <div class="overview-item-summary">${escapeHtml(n.summary || '')}</div>
+                <div class="overview-item-meta">${fmt(n.created_at)}</div>
+              </div>
+            `
+          )}
+        </article>
+
+        <article class="card compact-form-card">
+          <h3>Quick Add Note</h3>
+          <form id="note-form">
+            <input class="input" name="title" placeholder="Title (optional)" />
+            <textarea class="textarea" name="text" placeholder="Capture context for future sessions..." required></textarea>
+            <div class="row">
+              <button class="button" type="submit">Add note</button>
+            </div>
+          </form>
+        </article>
+
+        <article class="card compact-form-card">
+          <h3>Quick Add Task</h3>
+          <form id="task-form">
+            <input class="input" name="title" placeholder="Task title" required />
+            <textarea class="textarea" name="description" placeholder="Description (optional)"></textarea>
+            <div class="row">
+              <select class="select" name="priority">
+                <option value="low">low</option>
+                <option value="medium" selected>medium</option>
+                <option value="high">high</option>
+              </select>
+              <button class="button" type="submit">Add task</button>
+            </div>
+          </form>
+        </article>
+      </section>
+    </div>
+  `;
+}
+
+function renderTimeline(items) {
+  if (!items?.length) return '<div class="empty">No events yet.</div>';
+
+  const byDay = new Map();
+  for (const item of items) {
+    const dayKey = String(item.created_at || '').slice(0, 10) || 'unknown';
+    if (!byDay.has(dayKey)) byDay.set(dayKey, []);
+    byDay.get(dayKey).push(item);
+  }
+
+  const daySections = [...byDay.entries()]
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([day, rows]) => {
+      const label = day === 'unknown' ? 'Unknown date' : new Date(`${day}T00:00:00`).toLocaleDateString();
+      return `
+      <section class="timeline-day">
+        <div class="timeline-day-label">${escapeHtml(label)}</div>
+        <div class="timeline-events">
+          ${rows
+            .map((e) => {
+              const type = String(e.type || 'event');
+              const title = String(e.title || type);
+              const summary = String(e.summary || '').trim();
+              const meta = [e.created_by ? `by ${e.created_by}` : null, e.source ? `source ${e.source}` : null, e.id ? `#${e.id}` : null]
+                .filter(Boolean)
+                .join(' • ');
+              return `
+                <article class="timeline-item">
+                  <div class="timeline-dot"></div>
+                  <div class="timeline-card">
+                    <div class="timeline-card-head">
+                      <span class="timeline-time">${escapeHtml(fmt(e.created_at))}</span>
+                      <span class="timeline-type timeline-type-${escapeHtml(type)}">${escapeHtml(type.replaceAll('_', ' '))}</span>
+                    </div>
+                    <div class="timeline-title">${escapeHtml(title)}</div>
+                    ${summary ? `<div class="timeline-summary">${escapeHtml(summary)}</div>` : ''}
+                    ${meta ? `<div class="timeline-meta">${escapeHtml(meta)}</div>` : ''}
+                  </div>
+                </article>
+              `;
+            })
+            .join('')}
+        </div>
+      </section>
+      `;
+    })
+    .join('');
+
+  return `
+    <div class="timeline-shell">
+      <section class="card">
+        <h3>Timeline</h3>
+        <div class="kv muted">Scroll through the full project history in recorded order.</div>
+        <div class="timeline-scroll">${daySections}</div>
+      </section>
+    </div>
+  `;
+}
+
 function renderPreferences(data, summary) {
   const prefsText = JSON.stringify(data ?? {}, null, 2);
   return `
@@ -364,18 +569,12 @@ async function render() {
       return;
     }
     if (state.view === 'overview') {
-      const data = await load('overview', '/api/overview');
-      content.innerHTML = `<div class="card"><h3>Overview</h3><pre class="code">${escapeHtml(JSON.stringify(data, null, 2))}</pre></div>`;
+      content.innerHTML = renderOverview(await load('overview', '/api/overview'));
+      attachMutations();
       return;
     }
     if (state.view === 'timeline') {
-      const rows = await load('timeline', '/api/timeline');
-      content.innerHTML = renderSimpleTable(rows, [
-        { label: 'Time', get: (r) => fmt(r.created_at) },
-        { label: 'Type', get: (r) => r.type || '' },
-        { label: 'Title', get: (r) => r.title || '' },
-        { label: 'Summary', get: (r) => r.summary || '' },
-      ]);
+      content.innerHTML = renderTimeline(await load('timeline', '/api/timeline'));
       return;
     }
     if (state.view === 'preferences') {
@@ -389,6 +588,48 @@ async function render() {
     }
   } catch (err) {
     content.innerHTML = `<div class="empty">Failed to load view: ${escapeHtml(err?.message || String(err))}</div>`;
+  }
+}
+
+function attachMutations() {
+  const noteForm = document.getElementById('note-form');
+  if (noteForm) {
+    noteForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = new FormData(noteForm);
+      try {
+        await postJson('/api/notes', {
+          title: form.get('title'),
+          text: form.get('text'),
+        });
+        state.cache.overview = null;
+        state.cache.timeline = null;
+        await render();
+      } catch (err) {
+        alert(`Could not add note: ${err.message}`);
+      }
+    });
+  }
+
+  const taskForm = document.getElementById('task-form');
+  if (taskForm) {
+    taskForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const form = new FormData(taskForm);
+      try {
+        await postJson('/api/tasks', {
+          title: form.get('title'),
+          description: form.get('description'),
+          priority: form.get('priority'),
+        });
+        state.cache.overview = null;
+        state.cache.tasks = null;
+        state.cache.timeline = null;
+        await render();
+      } catch (err) {
+        alert(`Could not add task: ${err.message}`);
+      }
+    });
   }
 }
 
