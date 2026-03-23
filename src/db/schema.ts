@@ -1,7 +1,7 @@
-import type Database from 'better-sqlite3';
+import type { DatabaseSync } from 'node:sqlite';
 
-export function initializeSchema(db: Database.Database): void {
-  db.pragma('journal_mode = WAL');
+export function initializeSchema(db: DatabaseSync): void {
+  db.exec('PRAGMA journal_mode = WAL;');
   db.exec(`
     CREATE TABLE IF NOT EXISTS projects (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type Database from 'better-sqlite3';
+import type { DatabaseSync } from 'node:sqlite';
 import { JSON_CONTRACT_VERSION } from '../lib/output.js';
 import type { ApiArtifact, ApiEvent, ApiPreferences, ApiTask } from '../types/api.js';
 
@@ -16,7 +16,7 @@ export interface JsonExportPayload {
   events: ApiEvent[];
 }
 
-export function buildExportJson(db: Database.Database, input: {
+export function buildExportJson(db: DatabaseSync, input: {
   projectId: number;
   rootPath: string;
   limit?: number;
@@ -69,20 +69,20 @@ export function buildExportJson(db: Database.Database, input: {
        WHERE ${eventWhere.join(' AND ')}
        ORDER BY created_at DESC${limitClause}`
     )
-    .all(...eventArgs) as ApiEvent[];
+    .all(...(eventArgs as Array<string | number | null>)) as unknown as ApiEvent[];
 
   return {
     version: JSON_CONTRACT_VERSION,
     project,
     preferences: preferences as ApiPreferences | null,
     sessions: sessions as Array<Record<string, unknown>>,
-    tasks: tasks as ApiTask[],
-    artifacts: artifacts as ApiArtifact[],
+    tasks: tasks as unknown as ApiTask[],
+    artifacts: artifacts as unknown as ApiArtifact[],
     events,
   };
 }
 
-export function buildExportJsonlEvents(db: Database.Database, input: {
+export function buildExportJsonlEvents(db: DatabaseSync, input: {
   projectId: number;
   limit?: number;
   type?: string;
@@ -113,7 +113,7 @@ export function buildExportJsonlEvents(db: Database.Database, input: {
        WHERE ${where.join(' AND ')}
        ORDER BY created_at DESC${limitClause}`
     )
-    .all(...args) as Array<Record<string, unknown>>;
+    .all(...(args as Array<string | number | null>)) as Array<Record<string, unknown>>;
 
   return rows.map((row) => JSON.stringify({ version: JSON_CONTRACT_VERSION, record_type: 'event', project_id: row.project_id, data: row }));
 }

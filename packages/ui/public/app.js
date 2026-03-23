@@ -8,6 +8,12 @@ const state = {
 
 const content = document.getElementById('content');
 const navButtons = [...document.querySelectorAll('.nav-btn')];
+const noteModalBtn = document.getElementById('open-note-modal');
+const taskModalBtn = document.getElementById('open-task-modal');
+const decisionModalBtn = document.getElementById('open-decision-modal');
+
+let modalRoot = null;
+let modalBody = null;
 
 for (const btn of navButtons) {
   btn.addEventListener('click', () => {
@@ -17,6 +23,40 @@ for (const btn of navButtons) {
     navButtons.forEach((b) => b.classList.toggle('active', b === btn));
     render();
   });
+}
+
+function ensureModal() {
+  if (modalRoot) return;
+  modalRoot = document.createElement('div');
+  modalRoot.className = 'modal-root hidden';
+  modalRoot.innerHTML = `
+    <div class="modal-card" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h3 id="modal-title">Add</h3>
+        <button id="modal-close" class="icon-btn" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="modal-body"></div>
+    </div>
+  `;
+  document.body.appendChild(modalRoot);
+  modalBody = modalRoot.querySelector('#modal-body');
+  modalRoot.addEventListener('click', (event) => {
+    if (event.target === modalRoot) closeModal();
+  });
+  modalRoot.querySelector('#modal-close').addEventListener('click', closeModal);
+}
+
+function closeModal() {
+  if (!modalRoot) return;
+  modalRoot.classList.add('hidden');
+  modalBody.innerHTML = '';
+}
+
+function openModal(title, bodyHtml) {
+  ensureModal();
+  modalRoot.querySelector('#modal-title').textContent = title;
+  modalBody.innerHTML = bodyHtml;
+  modalRoot.classList.remove('hidden');
 }
 
 function fmt(ts) {
@@ -132,6 +172,7 @@ function renderMission(mission, taskDetail, runDetail, reviewSummary) {
                 <th>Runner</th>
                 <th>Run</th>
                 <th>Updated</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -147,11 +188,18 @@ function renderMission(mission, taskDetail, runDetail, reviewSummary) {
                         <td>${escapeHtml(task.assigned_runner || 'n/a')}</td>
                         <td>${task.latest_run_id ? `<button class="link-btn" data-run-id="${escapeHtml(task.latest_run_id)}">${escapeHtml(task.latest_run_id)}</button>` : '<span class="muted">none</span>'}</td>
                         <td>${fmt(task.updated_at)}</td>
+                        <td>
+                          <div class="row">
+                            <button class="button secondary mini icon-only" type="button" title="${task.is_packet ? 'Compile prompt' : 'Convert to task packet to compile'}" aria-label="Compile prompt" data-task-action="compile" data-task-id="${escapeHtml(task.task_id)}" ${task.is_packet ? '' : 'disabled'}>⧉</button>
+                            <button class="button mini icon-only" type="button" title="${task.is_packet ? 'Run task' : 'Convert to task packet to run'}" aria-label="Run task" data-task-action="run" data-task-id="${escapeHtml(task.task_id)}" ${task.is_packet ? '' : 'disabled'}>▶</button>
+                            ${task.latest_run_id ? `<button class="button secondary mini icon-only" type="button" title="View latest run" aria-label="View latest run" data-task-action="view-run" data-run-id="${escapeHtml(task.latest_run_id)}">↗</button>` : ''}
+                          </div>
+                        </td>
                       </tr>
                     `
                       )
                       .join('')
-                  : '<tr><td colspan="6" class="muted">No tasks in this filter.</td></tr>'
+                  : '<tr><td colspan="7" class="muted">No tasks in this filter.</td></tr>'
               }
             </tbody>
           </table>
@@ -247,58 +295,9 @@ function renderMission(mission, taskDetail, runDetail, reviewSummary) {
       <section class="card actions-card">
         <h3>Actions</h3>
         <div class="actions-grid">
-          <form id="create-task-form">
-            <h4>Create Task</h4>
-            <input class="input" name="title" placeholder="Title" required />
-            <input class="input" name="summary" placeholder="Summary" required />
-            <input class="input" name="goal" placeholder="Goal" required />
-            <div class="row">
-              <select class="select" name="status">
-                <option value="draft">draft</option>
-                <option value="ready" selected>ready</option>
-              </select>
-              <select class="select" name="priority">
-                <option value="low">low</option>
-                <option value="medium" selected>medium</option>
-                <option value="high">high</option>
-              </select>
-            </div>
-            <input class="input" name="tags" placeholder="tags (comma-separated)" />
-            <button class="button" type="submit">Create task</button>
-          </form>
-
-          <form id="compile-prompt-form">
-            <h4>Compile Prompt</h4>
-            <input class="input" name="task_id" placeholder="Task ID (e.g. T-001)" value="${escapeHtml(state.selectedTaskId || '')}" required />
-            <div class="row">
-              <select class="select" name="runner">
-                <option value="codex">codex</option>
-                <option value="claude">claude</option>
-              </select>
-              <input class="input" name="agent_role" placeholder="agent role" value="builder-app" />
-            </div>
-            <button class="button" type="submit">Compile prompt</button>
-          </form>
-
-          <form id="run-task-form">
-            <h4>Run Task</h4>
-            <input class="input" name="task_id" placeholder="Task ID (e.g. T-001)" value="${escapeHtml(state.selectedTaskId || '')}" required />
-            <div class="row">
-              <select class="select" name="runner">
-                <option value="">auto</option>
-                <option value="codex">codex</option>
-                <option value="claude">claude</option>
-              </select>
-              <input class="input" name="agent_role" placeholder="agent role override" />
-            </div>
-            <label class="check"><input type="checkbox" name="dry_run" checked /> dry run</label>
-            <button class="button" type="submit">Run task</button>
-          </form>
-
           <div>
-            <h4>View Latest Run</h4>
-            <p class="muted">Jump from the selected task to its latest run report.</p>
-            <button id="view-latest-run" class="button secondary" type="button" ${latestRun ? '' : 'disabled'}>View latest run</button>
+            <h4>Task Actions</h4>
+            <p class="help">Use the buttons on each task row to compile prompts and launch runs directly from the list.</p>
           </div>
         </div>
       </section>
@@ -434,33 +433,6 @@ function renderOverview(data) {
             `
           )}
         </article>
-
-        <article class="card compact-form-card">
-          <h3>Quick Add Note</h3>
-          <form id="note-form">
-            <input class="input" name="title" placeholder="Title (optional)" />
-            <textarea class="textarea" name="text" placeholder="Capture context for future sessions..." required></textarea>
-            <div class="row">
-              <button class="button" type="submit">Add note</button>
-            </div>
-          </form>
-        </article>
-
-        <article class="card compact-form-card">
-          <h3>Quick Add Task</h3>
-          <form id="task-form">
-            <input class="input" name="title" placeholder="Task title" required />
-            <textarea class="textarea" name="description" placeholder="Description (optional)"></textarea>
-            <div class="row">
-              <select class="select" name="priority">
-                <option value="low">low</option>
-                <option value="medium" selected>medium</option>
-                <option value="high">high</option>
-              </select>
-              <button class="button" type="submit">Add task</button>
-            </div>
-          </form>
-        </article>
       </section>
     </div>
   `;
@@ -545,6 +517,127 @@ function renderPreferences(data, summary) {
   `;
 }
 
+function invalidateGlobalData() {
+  state.cache.overview = null;
+  state.cache.timeline = null;
+  state.cache.tasks = null;
+  invalidateMission();
+}
+
+function openNoteModal() {
+  openModal(
+    'Add Note',
+    `
+    <form id="modal-note-form">
+      <input class="input" name="title" placeholder="Title (optional)" />
+      <textarea class="textarea" name="text" placeholder="Capture context for future sessions..." required></textarea>
+      <div class="modal-footer">
+        <button class="button secondary" data-close-modal type="button">Cancel</button>
+        <button class="button" type="submit">Add note</button>
+      </div>
+    </form>
+  `
+  );
+
+  const form = document.getElementById('modal-note-form');
+  form.querySelector('[data-close-modal]').addEventListener('click', closeModal);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    try {
+      await postJson('/api/notes', { title: data.get('title'), text: data.get('text') });
+      closeModal();
+      invalidateGlobalData();
+      await render();
+    } catch (err) {
+      alert(`Could not add note: ${err.message}`);
+    }
+  });
+}
+
+function openTaskModal() {
+  openModal(
+    'Add Task',
+    `
+    <form id="modal-task-form">
+      <input class="input" name="title" placeholder="Task title" required />
+      <textarea class="textarea" name="description" placeholder="Summary / goal"></textarea>
+      <select class="select" name="priority">
+        <option value="low">low</option>
+        <option value="medium" selected>medium</option>
+        <option value="high">high</option>
+      </select>
+      <div class="modal-footer">
+        <button class="button secondary" data-close-modal type="button">Cancel</button>
+        <button class="button" type="submit">Add task</button>
+      </div>
+    </form>
+  `
+  );
+
+  const form = document.getElementById('modal-task-form');
+  form.querySelector('[data-close-modal]').addEventListener('click', closeModal);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    try {
+      const title = String(data.get('title') || '').trim();
+      const description = String(data.get('description') || '').trim();
+      const summary = description || title;
+      const goal = description || `Complete: ${title}`;
+      await postJson('/api/task-packets', {
+        title,
+        summary,
+        goal,
+        status: 'ready',
+        priority: data.get('priority'),
+        tags: [],
+      });
+      closeModal();
+      invalidateGlobalData();
+      await render();
+    } catch (err) {
+      alert(`Could not add task: ${err.message}`);
+    }
+  });
+}
+
+function openDecisionModal() {
+  openModal(
+    'Add Decision',
+    `
+    <form id="modal-decision-form">
+      <input class="input" name="title" placeholder="Decision title" required />
+      <textarea class="textarea" name="summary" placeholder="Why this decision was made..." required></textarea>
+      <textarea class="textarea" name="details" placeholder="Details (optional)"></textarea>
+      <div class="modal-footer">
+        <button class="button secondary" data-close-modal type="button">Cancel</button>
+        <button class="button" type="submit">Record decision</button>
+      </div>
+    </form>
+  `
+  );
+
+  const form = document.getElementById('modal-decision-form');
+  form.querySelector('[data-close-modal]').addEventListener('click', closeModal);
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(form);
+    try {
+      await postJson('/api/decisions', {
+        title: data.get('title'),
+        summary: data.get('summary'),
+        details: data.get('details'),
+      });
+      closeModal();
+      invalidateGlobalData();
+      await render();
+    } catch (err) {
+      alert(`Could not add decision: ${err.message}`);
+    }
+  });
+}
+
 async function renderMissionView() {
   const mission = await load('mission', `/api/mission?status=${encodeURIComponent(state.missionStatus)}`, true);
   if (!state.selectedTaskId && mission.tasks?.length) state.selectedTaskId = mission.tasks[0].task_id;
@@ -570,7 +663,6 @@ async function render() {
     }
     if (state.view === 'overview') {
       content.innerHTML = renderOverview(await load('overview', '/api/overview'));
-      attachMutations();
       return;
     }
     if (state.view === 'timeline') {
@@ -591,47 +683,9 @@ async function render() {
   }
 }
 
-function attachMutations() {
-  const noteForm = document.getElementById('note-form');
-  if (noteForm) {
-    noteForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const form = new FormData(noteForm);
-      try {
-        await postJson('/api/notes', {
-          title: form.get('title'),
-          text: form.get('text'),
-        });
-        state.cache.overview = null;
-        state.cache.timeline = null;
-        await render();
-      } catch (err) {
-        alert(`Could not add note: ${err.message}`);
-      }
-    });
-  }
-
-  const taskForm = document.getElementById('task-form');
-  if (taskForm) {
-    taskForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const form = new FormData(taskForm);
-      try {
-        await postJson('/api/tasks', {
-          title: form.get('title'),
-          description: form.get('description'),
-          priority: form.get('priority'),
-        });
-        state.cache.overview = null;
-        state.cache.tasks = null;
-        state.cache.timeline = null;
-        await render();
-      } catch (err) {
-        alert(`Could not add task: ${err.message}`);
-      }
-    });
-  }
-}
+if (noteModalBtn) noteModalBtn.addEventListener('click', openNoteModal);
+if (taskModalBtn) taskModalBtn.addEventListener('click', openTaskModal);
+if (decisionModalBtn) decisionModalBtn.addEventListener('click', openDecisionModal);
 
 function attachMissionHandlers() {
   document.querySelectorAll('[data-status]').forEach((el) => {
@@ -661,82 +715,43 @@ function attachMissionHandlers() {
     });
   });
 
-  const viewLatest = document.getElementById('view-latest-run');
-  if (viewLatest) {
-    viewLatest.addEventListener('click', async () => {
-      const detail = await load('taskDetail', `/api/task-packets/${encodeURIComponent(state.selectedTaskId)}`, true);
-      state.selectedRunId = detail?.latest_run?.run_id || null;
-      state.cache.runDetail = null;
-      await render();
-    });
-  }
-
-  const createTaskForm = document.getElementById('create-task-form');
-  if (createTaskForm) {
-    createTaskForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const form = new FormData(createTaskForm);
+  document.querySelectorAll('[data-task-action]').forEach((el) => {
+    el.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      const action = el.getAttribute('data-task-action');
+      const taskId = el.getAttribute('data-task-id');
+      const runId = el.getAttribute('data-run-id');
       try {
-        await postJson('/api/task-packets', {
-          title: form.get('title'),
-          summary: form.get('summary'),
-          goal: form.get('goal'),
-          status: form.get('status'),
-          priority: form.get('priority'),
-          tags: String(form.get('tags') || '')
-            .split(',')
-            .map((v) => v.trim())
-            .filter(Boolean),
-        });
+        if (action === 'view-run' && runId) {
+          state.selectedRunId = runId;
+        } else if (action === 'compile' && taskId) {
+          const detail = await load('taskDetail', `/api/task-packets/${encodeURIComponent(taskId)}`, true);
+          const task = detail?.task || {};
+          const res = await postJson('/api/prompt/compile', {
+            task_id: taskId,
+            runner: task?.tracking?.assigned_runner || 'codex',
+            agent_role: task?.tracking?.assigned_agent_role || 'builder-app',
+          });
+          alert(`Prompt compiled: ${res?.data?.prompt_path || 'done'}`);
+        } else if (action === 'run' && taskId) {
+          const detail = await load('taskDetail', `/api/task-packets/${encodeURIComponent(taskId)}`, true);
+          const task = detail?.task || {};
+          const res = await postJson('/api/run/start', {
+            task_id: taskId,
+            runner: task?.tracking?.assigned_runner || null,
+            agent_role: task?.tracking?.assigned_agent_role || null,
+            dry_run: false,
+          });
+          const newRunId = res?.data?.run_id;
+          if (newRunId) state.selectedRunId = newRunId;
+        }
         invalidateMission();
         await render();
       } catch (err) {
-        alert(`Could not create task: ${err.message}`);
+        alert(`Task action failed: ${err.message}`);
       }
     });
-  }
-
-  const compileForm = document.getElementById('compile-prompt-form');
-  if (compileForm) {
-    compileForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const form = new FormData(compileForm);
-      try {
-        const res = await postJson('/api/prompt/compile', {
-          task_id: form.get('task_id'),
-          runner: form.get('runner'),
-          agent_role: form.get('agent_role'),
-        });
-        alert(`Prompt compiled: ${res?.data?.prompt_path || 'done'}`);
-        invalidateMission();
-        await render();
-      } catch (err) {
-        alert(`Could not compile prompt: ${err.message}`);
-      }
-    });
-  }
-
-  const runForm = document.getElementById('run-task-form');
-  if (runForm) {
-    runForm.addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const form = new FormData(runForm);
-      try {
-        const res = await postJson('/api/run/start', {
-          task_id: form.get('task_id'),
-          runner: form.get('runner') || null,
-          agent_role: form.get('agent_role') || null,
-          dry_run: form.get('dry_run') === 'on',
-        });
-        const runId = res?.data?.run_id;
-        if (runId) state.selectedRunId = runId;
-        invalidateMission();
-        await render();
-      } catch (err) {
-        alert(`Could not run task: ${err.message}`);
-      }
-    });
-  }
+  });
 
   document.querySelectorAll('[data-run-action]').forEach((el) => {
     el.addEventListener('click', async () => {

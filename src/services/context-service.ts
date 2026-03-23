@@ -1,8 +1,8 @@
 import { nowIso } from '../lib/format.js';
-import type Database from 'better-sqlite3';
+import type { DatabaseSync } from 'node:sqlite';
 import type { ApiContext } from '../types/api.js';
 
-export function buildContext(db: Database.Database, input: { projectId: number; limit: number }): ApiContext {
+export function buildContext(db: DatabaseSync, input: { projectId: number; limit: number }): ApiContext {
   const project = db.prepare(`SELECT name, root_path FROM projects WHERE id = ?`).get(input.projectId) as {
     name: string;
     root_path: string;
@@ -30,11 +30,11 @@ export function buildContext(db: Database.Database, input: { projectId: number; 
 
   const openTasks = db
     .prepare(`SELECT id, title, priority, updated_at FROM tasks WHERE project_id = ? AND status = 'open' ORDER BY updated_at DESC LIMIT ?`)
-    .all(input.projectId, input.limit) as ApiContext['openTasks'];
+    .all(input.projectId, input.limit) as unknown as ApiContext['openTasks'];
 
   const artifacts = db
     .prepare(`SELECT path, kind, note, created_at FROM artifacts WHERE project_id = ? ORDER BY created_at DESC LIMIT ?`)
-    .all(input.projectId, input.limit) as ApiContext['recentArtifacts'];
+    .all(input.projectId, input.limit) as unknown as ApiContext['recentArtifacts'];
 
   return {
     generatedAt: nowIso(),

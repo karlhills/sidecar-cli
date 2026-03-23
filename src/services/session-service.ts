@@ -1,14 +1,14 @@
-import type Database from 'better-sqlite3';
+import type { DatabaseSync } from 'node:sqlite';
 import { nowIso } from '../lib/format.js';
 import type { ActorType } from '../types/models.js';
 
-export function currentSession(db: Database.Database, projectId: number) {
+export function currentSession(db: DatabaseSync, projectId: number) {
   return db
     .prepare(`SELECT * FROM sessions WHERE project_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`)
     .get(projectId) as Record<string, unknown> | undefined;
 }
 
-export function startSession(db: Database.Database, input: { projectId: number; actor: ActorType; name?: string }) {
+export function startSession(db: DatabaseSync, input: { projectId: number; actor: ActorType; name?: string }) {
   const active = currentSession(db, input.projectId);
   if (active) return { ok: false as const, reason: 'A session is already active' };
 
@@ -19,7 +19,7 @@ export function startSession(db: Database.Database, input: { projectId: number; 
   return { ok: true as const, sessionId: Number(info.lastInsertRowid) };
 }
 
-export function endSession(db: Database.Database, input: { projectId: number; summary?: string }) {
+export function endSession(db: DatabaseSync, input: { projectId: number; summary?: string }) {
   const active = currentSession(db, input.projectId) as { id: number } | undefined;
   if (!active) return { ok: false as const, reason: 'No active session found' };
 
@@ -27,7 +27,7 @@ export function endSession(db: Database.Database, input: { projectId: number; su
   return { ok: true as const, sessionId: active.id };
 }
 
-export function verifySessionHygiene(db: Database.Database, projectId: number, summaryRecentlyRefreshed: boolean) {
+export function verifySessionHygiene(db: DatabaseSync, projectId: number, summaryRecentlyRefreshed: boolean) {
   const warnings: string[] = [];
 
   const active = currentSession(db, projectId) as { id: number } | undefined;

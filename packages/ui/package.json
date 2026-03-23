@@ -12,9 +12,6 @@
     "public"
   ],
   "engines": {
-    "node": ">=20"
-  },
-  "dependencies": {
-    "better-sqlite3": "^12.8.0"
+    "node": ">=22"
   }
 }

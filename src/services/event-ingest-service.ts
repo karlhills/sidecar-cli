@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { createEvent } from './event-service.js';
 import type { EventType } from '../types/models.js';
@@ -42,7 +42,7 @@ export const eventIngestSchema = z
 
 export type EventIngestPayload = z.infer<typeof eventIngestSchema>;
 
-export function ingestEvent(db: Database.Database, input: { project_id: number; payload: EventIngestPayload }): ApiEvent {
+export function ingestEvent(db: DatabaseSync, input: { project_id: number; payload: EventIngestPayload }): ApiEvent {
   const payload = eventIngestSchema.parse(input.payload);
 
   const title =

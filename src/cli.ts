@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline/promises';
 import { Command } from 'commander';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { initializeSchema } from './db/schema.js';
 import { findSidecarRoot, getSidecarPaths } from './lib/paths.js';
@@ -49,7 +49,7 @@ function fail(message: string): never {
   throw new SidecarError(message);
 }
 
-function maybeSessionId(db: Database.Database, projectId: number, explicit?: string): number | null {
+function maybeSessionId(db: DatabaseSync, projectId: number, explicit?: string): number | null {
   if (explicit) {
     const parsed = Number.parseInt(explicit, 10);
     if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -80,7 +80,7 @@ function respondSuccess(command: string, asJson: boolean, data: unknown, lines: 
   }
 }
 
-function summaryWasRefreshedRecently(db: Database.Database, projectId: number): boolean {
+function summaryWasRefreshedRecently(db: DatabaseSync, projectId: number): boolean {
   return Boolean(
     db
       .prepare(`SELECT id FROM events WHERE project_id = ? AND type = 'summary_generated' AND created_at >= datetime('now', '-3 day') LIMIT 1`)
@@ -367,7 +367,7 @@ program
         }
       }
 
-      const db = new Database(sidecar.dbPath);
+      const db = new DatabaseSync(sidecar.dbPath);
       initializeSchema(db);
       const ts = nowIso();
       db.prepare(`DELETE FROM projects`).run();
@@ -405,7 +405,7 @@ program
         fs.writeFileSync(sidecar.rootClaudePath, renderClaudeMarkdown(projectName));
       }
 
-      const db2 = new Database(sidecar.dbPath);
+      const db2 = new DatabaseSync(sidecar.dbPath);
       const refreshed = refreshSummaryFile(db2, rootPath, 1, 10);
       db2.close();
 

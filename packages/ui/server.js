@@ -4,7 +4,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,7 +30,7 @@ if (!fs.existsSync(sidecarDir) || !fs.existsSync(dbPath)) {
   process.exit(1);
 }
 
-const db = new Database(dbPath);
+const db = new DatabaseSync(dbPath);
 
 function json(res, code, data) {
   res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
@@ -120,6 +120,12 @@ function loadRuns() {
 
 function loadMission(statusFilter) {
   const tasks = loadTaskPackets();
+  const project = db.prepare('SELECT id FROM projects ORDER BY id LIMIT 1').get();
+  const legacyTasks = project?.id
+    ? db
+        .prepare(`SELECT id, title, status, priority, updated_at FROM tasks WHERE project_id = ? ORDER BY updated_at DESC`)
+        .all(project.id)
+    : [];
   const runs = loadRuns();
   const latestRunByTask = new Map();
   for (const run of runs) {
@@ -139,6 +145,7 @@ function loadMission(statusFilter) {
       title: task.title,
       status: task.status,
       priority: task.priority,
+      is_packet: true,
       assigned_agent_role: task.tracking?.assigned_agent_role ?? null,
       assigned_runner: task.tracking?.assigned_runner ?? null,
       latest_run_id: latestRun?.run_id ?? null,
@@ -147,22 +154,64 @@ function loadMission(statusFilter) {
     };
   });
 
-  const filtered = statusFilter && statusFilter !== 'all' ? rows.filter((row) => row.status === statusFilter) : rows;
+  const legacyRows = legacyTasks.map((task) => ({
+    task_id: `DB-${task.id}`,
+    title: task.title,
+    status: task.status === 'done' ? 'done' : 'ready',
+    priority: task.priority,
+    is_packet: false,
+    assigned_agent_role: null,
+    assigned_runner: null,
+    latest_run_id: null,
+    latest_run_status: null,
+    updated_at: task.updated_at ?? null,
+  }));
+
+  const allRows = [...rows, ...legacyRows].sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+
+  const filtered = statusFilter && statusFilter !== 'all' ? allRows.filter((row) => row.status === statusFilter) : allRows;
   return {
     statuses: ['ready', 'running', 'review', 'blocked', 'done'],
     tasks: filtered,
     counts: {
-      total: rows.length,
-      ready: rows.filter((row) => row.status === 'ready').length,
-      running: rows.filter((row) => row.status === 'running').length,
-      review: rows.filter((row) => row.status === 'review').length,
-      blocked: rows.filter((row) => row.status === 'blocked').length,
-      done: rows.filter((row) => row.status === 'done').length,
+      total: allRows.length,
+      ready: allRows.filter((row) => row.status === 'ready').length,
+      running: allRows.filter((row) => row.status === 'running').length,
+      review: allRows.filter((row) => row.status === 'review').length,
+      blocked: allRows.filter((row) => row.status === 'blocked').length,
+      done: allRows.filter((row) => row.status === 'done').length,
     },
   };
 }
 
 function loadTaskDetail(taskId) {
+  if (taskId.startsWith('DB-')) {
+    const legacyId = Number(taskId.slice(3));
+    if (!Number.isInteger(legacyId)) return null;
+    const project = db.prepare('SELECT id FROM projects ORDER BY id LIMIT 1').get();
+    if (!project?.id) return null;
+    const legacy = db
+      .prepare(`SELECT id, title, description, status, priority, updated_at FROM tasks WHERE project_id = ? AND id = ? LIMIT 1`)
+      .get(project.id, legacyId);
+    if (!legacy) return null;
+    return {
+      task: {
+        task_id: `DB-${legacy.id}`,
+        title: legacy.title,
+        summary: legacy.description || legacy.title,
+        goal: legacy.description || 'Track and complete this task.',
+        status: legacy.status === 'done' ? 'done' : 'ready',
+        priority: legacy.priority || 'medium',
+        is_packet: false,
+        scope: { in_scope: [], out_of_scope: [] },
+        constraints: { technical: [], design: [] },
+        context: { related_decisions: [], related_notes: [] },
+        tracking: {},
+      },
+      latest_run: null,
+      runs: [],
+    };
+  }
   const task = loadTaskPackets().find((row) => row.task_id === taskId);
   if (!task) return null;
   const runs = loadRuns().filter((run) => run.task_id === taskId);
@@ -272,7 +321,9 @@ function getProjectId() {
   return project?.id ?? null;
 }
 
-const addNoteTx = db.transaction((projectId, title, text) => {
+function addNoteTx(projectId, title, text) {
+  db.exec('BEGIN');
+  try {
   const ts = nowIso();
   const info = db
     .prepare(
@@ -280,35 +331,47 @@ const addNoteTx = db.transaction((projectId, title, text) => {
        VALUES (?, 'note', ?, ?, ?, ?, 'human', 'generated', NULL)`
     )
     .run(projectId, title, text, JSON.stringify({ text }), ts);
-  return Number(info.lastInsertRowid);
-});
+    db.exec('COMMIT');
+    return Number(info.lastInsertRowid);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
 
-const addTaskTx = db.transaction((projectId, title, description, priority) => {
-  const ts = nowIso();
-  const taskInfo = db
-    .prepare(
-      `INSERT INTO tasks (project_id, title, description, status, priority, created_at, updated_at, closed_at, origin_event_id)
-       VALUES (?, ?, ?, 'open', ?, ?, ?, NULL, NULL)`
-    )
-    .run(projectId, title, description ?? null, priority, ts, ts);
+function addTaskTx(projectId, title, description, priority) {
+  db.exec('BEGIN');
+  try {
+    const ts = nowIso();
+    const taskInfo = db
+      .prepare(
+        `INSERT INTO tasks (project_id, title, description, status, priority, created_at, updated_at, closed_at, origin_event_id)
+         VALUES (?, ?, ?, 'open', ?, ?, ?, NULL, NULL)`
+      )
+      .run(projectId, title, description ?? null, priority, ts, ts);
 
-  const taskId = Number(taskInfo.lastInsertRowid);
-  const eventInfo = db
-    .prepare(
-      `INSERT INTO events (project_id, type, title, summary, details_json, created_at, created_by, source, session_id)
-       VALUES (?, 'task_created', ?, ?, ?, ?, 'human', 'generated', NULL)`
-    )
-    .run(
-      projectId,
-      `Task #${taskId} created`,
-      title,
-      JSON.stringify({ taskId, description: description ?? null, priority }),
-      ts
-    );
-  const eventId = Number(eventInfo.lastInsertRowid);
-  db.prepare(`UPDATE tasks SET origin_event_id = ? WHERE id = ?`).run(eventId, taskId);
-  return { taskId, eventId };
-});
+    const taskId = Number(taskInfo.lastInsertRowid);
+    const eventInfo = db
+      .prepare(
+        `INSERT INTO events (project_id, type, title, summary, details_json, created_at, created_by, source, session_id)
+         VALUES (?, 'task_created', ?, ?, ?, ?, 'human', 'generated', NULL)`
+      )
+      .run(
+        projectId,
+        `Task #${taskId} created`,
+        title,
+        JSON.stringify({ taskId, description: description ?? null, priority }),
+        ts
+      );
+    const eventId = Number(eventInfo.lastInsertRowid);
+    db.prepare(`UPDATE tasks SET origin_event_id = ? WHERE id = ?`).run(eventId, taskId);
+    db.exec('COMMIT');
+    return { taskId, eventId };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
 
 function serveFile(res, filePath) {
   if (!fs.existsSync(filePath)) {
@@ -344,6 +407,31 @@ const server = http.createServer((req, res) => {
           if (!projectId) return json(res, 400, { error: 'project not found' });
           const eventId = addNoteTx(projectId, title, text);
           return json(res, 201, { ok: true, eventId });
+        })
+        .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
+      return;
+    }
+
+    if (url.pathname === '/api/decisions' && req.method === 'POST') {
+      readBody(req)
+        .then((raw) => {
+          const body = raw ? JSON.parse(raw) : {};
+          const title = String(body.title ?? '').trim();
+          const summary = String(body.summary ?? '').trim();
+          const details = String(body.details ?? '').trim();
+          if (!title || !summary) return json(res, 400, { error: 'title and summary are required' });
+          const payload = runSidecarJson([
+            'decision',
+            'record',
+            '--title',
+            title,
+            '--summary',
+            summary,
+            ...(details ? ['--details', details] : []),
+            '--by',
+            'human',
+          ]);
+          return json(res, 200, payload);
         })
         .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
       return;
@@ -385,6 +473,23 @@ const server = http.createServer((req, res) => {
             ...(dependencies ? ['--dependencies', dependencies] : []),
           ]);
           return json(res, 201, payload);
+        })
+        .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
+      return;
+    }
+
+    if (url.pathname === '/api/tasks' && req.method === 'POST') {
+      readBody(req)
+        .then((raw) => {
+          const body = raw ? JSON.parse(raw) : {};
+          const title = String(body.title ?? '').trim();
+          const description = String(body.description ?? '').trim() || null;
+          const priority = ['low', 'medium', 'high'].includes(body.priority) ? body.priority : 'medium';
+          if (!title) return json(res, 400, { error: 'title is required' });
+          const projectId = getProjectId();
+          if (!projectId) return json(res, 400, { error: 'project not found' });
+          const created = addTaskTx(projectId, title, description, priority);
+          return json(res, 201, { ok: true, ...created });
         })
         .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
       return;
@@ -505,10 +610,24 @@ const server = http.createServer((req, res) => {
       return json(res, 200, loadRuns());
     if (req.method === 'GET' && url.pathname.startsWith('/api/runs/'))
       return json(res, 200, loadRunDetail(url.pathname.split('/').pop() || ''));
-    if (req.method === 'GET' && url.pathname === '/api/run-summary')
-      return json(res, 200, parseEnvelope(runSidecarJson(['run', 'summary'])));
+    if (req.method === 'GET' && url.pathname === '/api/run-summary') {
+      try {
+        return json(res, 200, parseEnvelope(runSidecarJson(['run', 'summary'])));
+      } catch {
+        return json(res, 200, {
+          completed_runs: 0,
+          blocked_runs: 0,
+          suggested_follow_ups: 0,
+          recently_merged: [],
+        });
+      }
+    }
     if (req.method === 'GET' && url.pathname === '/api/preferences') return json(res, 200, readPreferences());
     if (req.method === 'GET' && url.pathname === '/api/summary') return json(res, 200, { markdown: readSummary() });
+
+    if (url.pathname.startsWith('/api/')) {
+      return json(res, 404, { error: `Unknown API route: ${req.method} ${url.pathname}` });
+    }
 
     if (url.pathname === '/' || url.pathname === '/index.html') {
       return serveFile(res, path.join(publicDir, 'index.html'));
