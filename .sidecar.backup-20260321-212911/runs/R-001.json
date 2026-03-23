@@ -1,0 +1,23 @@
+{
+  "version": "1.0",
+  "run_id": "R-001",
+  "task_id": "T-001",
+  "runner_type": "codex",
+  "agent_role": "implementer",
+  "status": "completed",
+  "branch": "",
+  "worktree": "",
+  "prompt_path": "",
+  "started_at": "2026-03-19T17:43:16.592Z",
+  "completed_at": "2026-03-19T17:43:16.594Z",
+  "summary": "Completed initial run",
+  "changed_files": [
+    "src/cli.ts"
+  ],
+  "commands_run": [],
+  "validation_results": [
+    "build ok"
+  ],
+  "blockers": [],
+  "follow_ups": []
+}

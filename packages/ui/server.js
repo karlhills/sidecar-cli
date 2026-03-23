@@ -2,8 +2,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,13 +22,15 @@ const sidecarDir = path.join(projectPath, '.sidecar');
 const dbPath = path.join(sidecarDir, 'sidecar.db');
 const prefsPath = path.join(sidecarDir, 'preferences.json');
 const summaryPath = path.join(sidecarDir, 'summary.md');
+const taskPacketsPath = path.join(sidecarDir, 'tasks');
+const runsPath = path.join(sidecarDir, 'runs');
 
 if (!fs.existsSync(sidecarDir) || !fs.existsSync(dbPath)) {
   console.error('Sidecar UI error: selected project is not initialized (.sidecar/sidecar.db missing).');
   process.exit(1);
 }
 
-const db = new Database(dbPath);
+const db = new DatabaseSync(dbPath);
 
 function json(res, code, data) {
   res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' });
@@ -77,6 +80,181 @@ function readSummary() {
   } catch {
     return '';
   }
+}
+
+function readJsonFileSafe(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function listJsonRecords(dirPath) {
+  if (!fs.existsSync(dirPath)) return [];
+  const files = fs
+    .readdirSync(dirPath, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.json'))
+    .map((entry) => path.join(dirPath, entry.name))
+    .sort();
+
+  const rows = [];
+  for (const filePath of files) {
+    const parsed = readJsonFileSafe(filePath);
+    if (parsed) rows.push(parsed);
+  }
+  return rows;
+}
+
+function loadTaskPackets() {
+  return listJsonRecords(taskPacketsPath).map((task) => {
+    if (task.status === 'open') task.status = 'draft';
+    if (task.status === 'in_progress') task.status = 'running';
+    return task;
+  });
+}
+
+function loadRuns() {
+  return listJsonRecords(runsPath).sort((a, b) => String(b.started_at || '').localeCompare(String(a.started_at || '')));
+}
+
+function loadMission(statusFilter) {
+  const tasks = loadTaskPackets();
+  const project = db.prepare('SELECT id FROM projects ORDER BY id LIMIT 1').get();
+  const legacyTasks = project?.id
+    ? db
+        .prepare(`SELECT id, title, status, priority, updated_at FROM tasks WHERE project_id = ? ORDER BY updated_at DESC`)
+        .all(project.id)
+    : [];
+  const runs = loadRuns();
+  const latestRunByTask = new Map();
+  for (const run of runs) {
+    if (!latestRunByTask.has(run.task_id)) latestRunByTask.set(run.task_id, run);
+  }
+
+  const rows = tasks.map((task) => {
+    const latestRun = latestRunByTask.get(task.task_id) ?? null;
+    const lastUpdated =
+      latestRun?.completed_at ||
+      latestRun?.started_at ||
+      task.tracking?.assigned_at ||
+      task.result?.updated_at ||
+      null;
+    return {
+      task_id: task.task_id,
+      title: task.title,
+      status: task.status,
+      priority: task.priority,
+      is_packet: true,
+      assigned_agent_role: task.tracking?.assigned_agent_role ?? null,
+      assigned_runner: task.tracking?.assigned_runner ?? null,
+      latest_run_id: latestRun?.run_id ?? null,
+      latest_run_status: latestRun?.status ?? null,
+      updated_at: lastUpdated,
+    };
+  });
+
+  const legacyRows = legacyTasks.map((task) => ({
+    task_id: `DB-${task.id}`,
+    title: task.title,
+    status: task.status === 'done' ? 'done' : 'ready',
+    priority: task.priority,
+    is_packet: false,
+    assigned_agent_role: null,
+    assigned_runner: null,
+    latest_run_id: null,
+    latest_run_status: null,
+    updated_at: task.updated_at ?? null,
+  }));
+
+  const allRows = [...rows, ...legacyRows].sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+
+  const filtered = statusFilter && statusFilter !== 'all' ? allRows.filter((row) => row.status === statusFilter) : allRows;
+  return {
+    statuses: ['ready', 'running', 'review', 'blocked', 'done'],
+    tasks: filtered,
+    counts: {
+      total: allRows.length,
+      ready: allRows.filter((row) => row.status === 'ready').length,
+      running: allRows.filter((row) => row.status === 'running').length,
+      review: allRows.filter((row) => row.status === 'review').length,
+      blocked: allRows.filter((row) => row.status === 'blocked').length,
+      done: allRows.filter((row) => row.status === 'done').length,
+    },
+  };
+}
+
+function loadTaskDetail(taskId) {
+  if (taskId.startsWith('DB-')) {
+    const legacyId = Number(taskId.slice(3));
+    if (!Number.isInteger(legacyId)) return null;
+    const project = db.prepare('SELECT id FROM projects ORDER BY id LIMIT 1').get();
+    if (!project?.id) return null;
+    const legacy = db
+      .prepare(`SELECT id, title, description, status, priority, updated_at FROM tasks WHERE project_id = ? AND id = ? LIMIT 1`)
+      .get(project.id, legacyId);
+    if (!legacy) return null;
+    return {
+      task: {
+        task_id: `DB-${legacy.id}`,
+        title: legacy.title,
+        summary: legacy.description || legacy.title,
+        goal: legacy.description || 'Track and complete this task.',
+        status: legacy.status === 'done' ? 'done' : 'ready',
+        priority: legacy.priority || 'medium',
+        is_packet: false,
+        scope: { in_scope: [], out_of_scope: [] },
+        constraints: { technical: [], design: [] },
+        context: { related_decisions: [], related_notes: [] },
+        tracking: {},
+      },
+      latest_run: null,
+      runs: [],
+    };
+  }
+  const task = loadTaskPackets().find((row) => row.task_id === taskId);
+  if (!task) return null;
+  const runs = loadRuns().filter((run) => run.task_id === taskId);
+  return {
+    task,
+    latest_run: runs[0] ?? null,
+    runs,
+  };
+}
+
+function loadRunDetail(runId) {
+  const run = loadRuns().find((row) => row.run_id === runId);
+  return run ?? null;
+}
+
+function resolveSidecarInvocation() {
+  const cliJs = process.env.SIDECAR_CLI_JS;
+  if (cliJs && fs.existsSync(cliJs)) {
+    return { command: process.execPath, baseArgs: [cliJs] };
+  }
+  return { command: 'sidecar', baseArgs: [] };
+}
+
+function runSidecar(args) {
+  const { command, baseArgs } = resolveSidecarInvocation();
+  const fullArgs = [...baseArgs, ...args];
+  const output = execFileSync(command, fullArgs, {
+    cwd: projectPath,
+    encoding: 'utf8',
+    env: { ...process.env, SIDECAR_NO_BANNER: '1' },
+  });
+  return output.trim();
+}
+
+function runSidecarJson(args) {
+  const output = runSidecar([...args, '--json']);
+  if (!output) return null;
+  return JSON.parse(output);
+}
+
+function parseEnvelope(payload) {
+  if (payload && payload.ok === true) return payload.data;
+  return payload;
 }
 
 function loadOverview() {
@@ -143,7 +321,9 @@ function getProjectId() {
   return project?.id ?? null;
 }
 
-const addNoteTx = db.transaction((projectId, title, text) => {
+function addNoteTx(projectId, title, text) {
+  db.exec('BEGIN');
+  try {
   const ts = nowIso();
   const info = db
     .prepare(
@@ -151,35 +331,47 @@ const addNoteTx = db.transaction((projectId, title, text) => {
        VALUES (?, 'note', ?, ?, ?, ?, 'human', 'generated', NULL)`
     )
     .run(projectId, title, text, JSON.stringify({ text }), ts);
-  return Number(info.lastInsertRowid);
-});
+    db.exec('COMMIT');
+    return Number(info.lastInsertRowid);
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
 
-const addTaskTx = db.transaction((projectId, title, description, priority) => {
-  const ts = nowIso();
-  const taskInfo = db
-    .prepare(
-      `INSERT INTO tasks (project_id, title, description, status, priority, created_at, updated_at, closed_at, origin_event_id)
-       VALUES (?, ?, ?, 'open', ?, ?, ?, NULL, NULL)`
-    )
-    .run(projectId, title, description ?? null, priority, ts, ts);
+function addTaskTx(projectId, title, description, priority) {
+  db.exec('BEGIN');
+  try {
+    const ts = nowIso();
+    const taskInfo = db
+      .prepare(
+        `INSERT INTO tasks (project_id, title, description, status, priority, created_at, updated_at, closed_at, origin_event_id)
+         VALUES (?, ?, ?, 'open', ?, ?, ?, NULL, NULL)`
+      )
+      .run(projectId, title, description ?? null, priority, ts, ts);
 
-  const taskId = Number(taskInfo.lastInsertRowid);
-  const eventInfo = db
-    .prepare(
-      `INSERT INTO events (project_id, type, title, summary, details_json, created_at, created_by, source, session_id)
-       VALUES (?, 'task_created', ?, ?, ?, ?, 'human', 'generated', NULL)`
-    )
-    .run(
-      projectId,
-      `Task #${taskId} created`,
-      title,
-      JSON.stringify({ taskId, description: description ?? null, priority }),
-      ts
-    );
-  const eventId = Number(eventInfo.lastInsertRowid);
-  db.prepare(`UPDATE tasks SET origin_event_id = ? WHERE id = ?`).run(eventId, taskId);
-  return { taskId, eventId };
-});
+    const taskId = Number(taskInfo.lastInsertRowid);
+    const eventInfo = db
+      .prepare(
+        `INSERT INTO events (project_id, type, title, summary, details_json, created_at, created_by, source, session_id)
+         VALUES (?, 'task_created', ?, ?, ?, ?, 'human', 'generated', NULL)`
+      )
+      .run(
+        projectId,
+        `Task #${taskId} created`,
+        title,
+        JSON.stringify({ taskId, description: description ?? null, priority }),
+        ts
+      );
+    const eventId = Number(eventInfo.lastInsertRowid);
+    db.prepare(`UPDATE tasks SET origin_event_id = ? WHERE id = ?`).run(eventId, taskId);
+    db.exec('COMMIT');
+    return { taskId, eventId };
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
 
 function serveFile(res, filePath) {
   if (!fs.existsSync(filePath)) {
@@ -220,6 +412,72 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    if (url.pathname === '/api/decisions' && req.method === 'POST') {
+      readBody(req)
+        .then((raw) => {
+          const body = raw ? JSON.parse(raw) : {};
+          const title = String(body.title ?? '').trim();
+          const summary = String(body.summary ?? '').trim();
+          const details = String(body.details ?? '').trim();
+          if (!title || !summary) return json(res, 400, { error: 'title and summary are required' });
+          const payload = runSidecarJson([
+            'decision',
+            'record',
+            '--title',
+            title,
+            '--summary',
+            summary,
+            ...(details ? ['--details', details] : []),
+            '--by',
+            'human',
+          ]);
+          return json(res, 200, payload);
+        })
+        .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
+      return;
+    }
+
+    if (url.pathname === '/api/task-packets' && req.method === 'POST') {
+      readBody(req)
+        .then((raw) => {
+          const body = raw ? JSON.parse(raw) : {};
+          const title = String(body.title ?? '').trim();
+          const summary = String(body.summary ?? '').trim();
+          const goal = String(body.goal ?? '').trim();
+          const priority = ['low', 'medium', 'high'].includes(body.priority) ? body.priority : 'medium';
+          const status = ['draft', 'ready', 'queued', 'running', 'review', 'blocked', 'done'].includes(body.status)
+            ? body.status
+            : 'draft';
+          const tags = Array.isArray(body.tags) ? body.tags.join(',') : '';
+          const targetAreas = Array.isArray(body.target_areas) ? body.target_areas.join(',') : '';
+          const dependencies = Array.isArray(body.dependencies) ? body.dependencies.join(',') : '';
+          if (!title) return json(res, 400, { error: 'title is required' });
+          if (!summary) return json(res, 400, { error: 'summary is required' });
+          if (!goal) return json(res, 400, { error: 'goal is required' });
+
+          const payload = runSidecarJson([
+            'task',
+            'create',
+            '--title',
+            title,
+            '--summary',
+            summary,
+            '--goal',
+            goal,
+            '--priority',
+            priority,
+            '--status',
+            status,
+            ...(tags ? ['--tags', tags] : []),
+            ...(targetAreas ? ['--target-areas', targetAreas] : []),
+            ...(dependencies ? ['--dependencies', dependencies] : []),
+          ]);
+          return json(res, 201, payload);
+        })
+        .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
+      return;
+    }
+
     if (url.pathname === '/api/tasks' && req.method === 'POST') {
       readBody(req)
         .then((raw) => {
@@ -230,8 +488,95 @@ const server = http.createServer((req, res) => {
           if (!title) return json(res, 400, { error: 'title is required' });
           const projectId = getProjectId();
           if (!projectId) return json(res, 400, { error: 'project not found' });
-          const result = addTaskTx(projectId, title, description, priority);
-          return json(res, 201, { ok: true, ...result });
+          const created = addTaskTx(projectId, title, description, priority);
+          return json(res, 201, { ok: true, ...created });
+        })
+        .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
+      return;
+    }
+
+    if (url.pathname === '/api/prompt/compile' && req.method === 'POST') {
+      readBody(req)
+        .then((raw) => {
+          const body = raw ? JSON.parse(raw) : {};
+          const taskId = String(body.task_id ?? '').trim().toUpperCase();
+          const runner = ['codex', 'claude'].includes(body.runner) ? body.runner : 'codex';
+          const agentRole = String(body.agent_role ?? 'builder-app');
+          if (!taskId) return json(res, 400, { error: 'task_id is required' });
+          const payload = runSidecarJson([
+            'prompt',
+            'compile',
+            taskId,
+            '--runner',
+            runner,
+            '--agent-role',
+            agentRole,
+          ]);
+          return json(res, 200, payload);
+        })
+        .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
+      return;
+    }
+
+    if (url.pathname === '/api/run/start' && req.method === 'POST') {
+      readBody(req)
+        .then((raw) => {
+          const body = raw ? JSON.parse(raw) : {};
+          const taskId = String(body.task_id ?? '').trim().toUpperCase();
+          const runner = ['codex', 'claude'].includes(body.runner) ? body.runner : null;
+          const agentRole = body.agent_role ? String(body.agent_role) : null;
+          const dryRun = Boolean(body.dry_run);
+          if (!taskId) return json(res, 400, { error: 'task_id is required' });
+          const payload = runSidecarJson([
+            'run',
+            taskId,
+            ...(runner ? ['--runner', runner] : []),
+            ...(agentRole ? ['--agent-role', agentRole] : []),
+            ...(dryRun ? ['--dry-run'] : []),
+          ]);
+          return json(res, 200, payload);
+        })
+        .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
+      return;
+    }
+
+    if (url.pathname === '/api/run/approve' && req.method === 'POST') {
+      readBody(req)
+        .then((raw) => {
+          const body = raw ? JSON.parse(raw) : {};
+          const runId = String(body.run_id ?? '').trim().toUpperCase();
+          const state = ['approved', 'needs_changes', 'merged'].includes(body.state) ? body.state : 'approved';
+          const note = String(body.note ?? '');
+          if (!runId) return json(res, 400, { error: 'run_id is required' });
+          const payload = runSidecarJson(['run', 'approve', runId, '--state', state, ...(note ? ['--note', note] : [])]);
+          return json(res, 200, payload);
+        })
+        .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
+      return;
+    }
+
+    if (url.pathname === '/api/run/block' && req.method === 'POST') {
+      readBody(req)
+        .then((raw) => {
+          const body = raw ? JSON.parse(raw) : {};
+          const runId = String(body.run_id ?? '').trim().toUpperCase();
+          const note = String(body.note ?? '');
+          if (!runId) return json(res, 400, { error: 'run_id is required' });
+          const payload = runSidecarJson(['run', 'block', runId, ...(note ? ['--note', note] : [])]);
+          return json(res, 200, payload);
+        })
+        .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
+      return;
+    }
+
+    if (url.pathname === '/api/task/create-followup' && req.method === 'POST') {
+      readBody(req)
+        .then((raw) => {
+          const body = raw ? JSON.parse(raw) : {};
+          const runId = String(body.run_id ?? '').trim().toUpperCase();
+          if (!runId) return json(res, 400, { error: 'run_id is required' });
+          const payload = runSidecarJson(['task', 'create-followup', runId]);
+          return json(res, 200, payload);
         })
         .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
       return;
@@ -255,8 +600,34 @@ const server = http.createServer((req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/timeline') return json(res, 200, loadTimeline());
     if (req.method === 'GET' && url.pathname === '/api/tasks') return json(res, 200, loadTasks());
     if (req.method === 'GET' && url.pathname === '/api/decisions') return json(res, 200, loadDecisions());
+    if (req.method === 'GET' && url.pathname === '/api/mission')
+      return json(res, 200, loadMission(url.searchParams.get('status')));
+    if (req.method === 'GET' && url.pathname === '/api/task-packets')
+      return json(res, 200, loadTaskPackets());
+    if (req.method === 'GET' && url.pathname.startsWith('/api/task-packets/'))
+      return json(res, 200, loadTaskDetail(url.pathname.split('/').pop() || ''));
+    if (req.method === 'GET' && url.pathname === '/api/runs')
+      return json(res, 200, loadRuns());
+    if (req.method === 'GET' && url.pathname.startsWith('/api/runs/'))
+      return json(res, 200, loadRunDetail(url.pathname.split('/').pop() || ''));
+    if (req.method === 'GET' && url.pathname === '/api/run-summary') {
+      try {
+        return json(res, 200, parseEnvelope(runSidecarJson(['run', 'summary'])));
+      } catch {
+        return json(res, 200, {
+          completed_runs: 0,
+          blocked_runs: 0,
+          suggested_follow_ups: 0,
+          recently_merged: [],
+        });
+      }
+    }
     if (req.method === 'GET' && url.pathname === '/api/preferences') return json(res, 200, readPreferences());
     if (req.method === 'GET' && url.pathname === '/api/summary') return json(res, 200, { markdown: readSummary() });
+
+    if (url.pathname.startsWith('/api/')) {
+      return json(res, 404, { error: `Unknown API route: ${req.method} ${url.pathname}` });
+    }
 
     if (url.pathname === '/' || url.pathname === '/index.html') {
       return serveFile(res, path.join(publicDir, 'index.html'));

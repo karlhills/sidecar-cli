@@ -1,8 +1,8 @@
-import type Database from 'better-sqlite3';
+import type { DatabaseSync } from 'node:sqlite';
 import { nowIso } from '../lib/format.js';
 import type { ArtifactKind } from '../types/models.js';
 
-export function addArtifact(db: Database.Database, input: {
+export function addArtifact(db: DatabaseSync, input: {
   projectId: number;
   path: string;
   kind: ArtifactKind;
@@ -15,7 +15,7 @@ export function addArtifact(db: Database.Database, input: {
   return Number(info.lastInsertRowid);
 }
 
-export function listArtifacts(db: Database.Database, projectId: number) {
+export function listArtifacts(db: DatabaseSync, projectId: number) {
   return db
     .prepare(`SELECT id, path, kind, note, created_at FROM artifacts WHERE project_id = ? ORDER BY created_at DESC LIMIT 50`)
     .all(projectId);

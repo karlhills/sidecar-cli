@@ -1,0 +1,13 @@
+{
+  "update_id": "SU-005",
+  "source_type": "decision",
+  "source_id": "D-21",
+  "target_spec": "architecture",
+  "title": "Update architecture spec from decision",
+  "rationale": "This decision indicates durable architecture guidance that should stay documented.",
+  "proposed_summary": "Task packets represent durable intent while run records capture each execution attempt; separate storage under .sidecar/runs enables multiple attempts and clean task-to-runs querying.",
+  "proposed_patch_text": "## Constraints\n- Task packets represent durable intent while run records capture each execution attempt; separate storage under .sidecar/runs enables multiple attempts and clean task-to-runs querying.",
+  "status": "proposed",
+  "created_at": "2026-03-19T20:39:31.156Z",
+  "updated_at": "2026-03-19T20:39:31.156Z"
+}

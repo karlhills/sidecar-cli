@@ -1,0 +1,13 @@
+{
+  "update_id": "SU-008",
+  "source_type": "run",
+  "source_id": "R-001",
+  "target_spec": "ui",
+  "title": "Update ui guidelines spec from run",
+  "rationale": "This run indicates durable ui guidance that should stay documented.",
+  "proposed_summary": "Completed initial run",
+  "proposed_patch_text": "## Patterns\n- Completed initial run",
+  "status": "proposed",
+  "created_at": "2026-03-19T20:39:31.156Z",
+  "updated_at": "2026-03-19T20:39:31.156Z"
+}

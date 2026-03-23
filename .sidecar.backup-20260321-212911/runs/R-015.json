@@ -1,0 +1,37 @@
+{
+  "version": "1.0",
+  "run_id": "R-015",
+  "task_id": "T-001",
+  "runner_type": "codex",
+  "agent_role": "builder-app",
+  "status": "failed",
+  "branch": "",
+  "worktree": "/Volumes/AI/Projects/sidecar-cli",
+  "prompt_path": "/Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-015.md",
+  "started_at": "2026-03-19T20:47:11.999Z",
+  "completed_at": "2026-03-19T20:47:12.011Z",
+  "execution_started_at": "2026-03-19T20:47:12.002Z",
+  "execution_completed_at": "2026-03-19T20:47:12.011Z",
+  "command_string": "codex run --prompt-file /Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-015.md --role builder-app",
+  "exit_code": 2,
+  "stdout_log_path": "/Volumes/AI/Projects/sidecar-cli/.sidecar/runs/R-015.stdout.log",
+  "stderr_log_path": "/Volumes/AI/Projects/sidecar-cli/.sidecar/runs/R-015.stderr.log",
+  "stdout_summary": "",
+  "stderr_summary": "error: unexpected argument '--prompt-file' found\n\n  tip: a similar argument exists: '--profile'\n\nUsage: codex [OPTIONS] [PROMPT]\n       codex [OPTIONS] <COMMAND> [ARGS]\n\nFor more information, try '--help'.",
+  "summary": "Codex execution failed with exit code 2. Error: error: unexpected argument '--prompt-file' found\n\n  tip: a similar argument exists: '--profile'\n\nUsage: codex [OPTIONS] [PROMPT]\n       codex [OPTIONS] <COMMAND> [ARGS]\n\nFor more information, try '--help'.",
+  "changed_files": [],
+  "commands_run": [
+    "codex run --prompt-file /Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-015.md --role builder-app"
+  ],
+  "validation_results": [
+    "process-exit:2"
+  ],
+  "blockers": [
+    "Codex execution failed with exit code 2. Error: error: unexpected argument '--prompt-file' found\n\n  tip: a similar argument exists: '--profile'\n\nUsage: codex [OPTIONS] [PROMPT]\n       codex [OPTIONS] <COMMAND> [ARGS]\n\nFor more information, try '--help'."
+  ],
+  "follow_ups": [],
+  "review_state": "pending",
+  "reviewed_at": null,
+  "reviewed_by": "",
+  "review_note": ""
+}

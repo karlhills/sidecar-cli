@@ -1,9 +1,9 @@
 import { nowIso } from '../lib/format.js';
-import type Database from 'better-sqlite3';
+import type { DatabaseSync } from 'node:sqlite';
 import { createEvent } from './event-service.js';
 import type { ActorType, TaskPriority } from '../types/models.js';
 
-export function addTask(db: Database.Database, input: {
+export function addTask(db: DatabaseSync, input: {
   projectId: number;
   title: string;
   description?: string;
@@ -32,7 +32,7 @@ export function addTask(db: Database.Database, input: {
   return { taskId, eventId };
 }
 
-export function markTaskDone(db: Database.Database, input: { projectId: number; taskId: number; by?: ActorType }) {
+export function markTaskDone(db: DatabaseSync, input: { projectId: number; taskId: number; by?: ActorType }) {
   const existing = db
     .prepare(`SELECT id, title, status FROM tasks WHERE project_id = ? AND id = ?`)
     .get(input.projectId, input.taskId) as { id: number; title: string; status: string } | undefined;
@@ -60,7 +60,7 @@ export function markTaskDone(db: Database.Database, input: { projectId: number; 
   return { ok: true as const, eventId };
 }
 
-export function listTasks(db: Database.Database, input: { projectId: number; status: 'open' | 'done' | 'all' }) {
+export function listTasks(db: DatabaseSync, input: { projectId: number; status: 'open' | 'done' | 'all' }) {
   if (input.status === 'all') {
     return db
       .prepare(

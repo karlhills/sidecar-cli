@@ -1,0 +1,13 @@
+{
+  "update_id": "SU-001",
+  "source_type": "decision",
+  "source_id": "D-39",
+  "target_spec": "architecture",
+  "title": "Update architecture spec from decision",
+  "rationale": "This decision indicates durable architecture guidance that should stay documented.",
+  "proposed_summary": "Re-running init should safely create only missing files and report skipped items; lightweight templates keep onboarding useful without heavy process overhead.",
+  "proposed_patch_text": "## Constraints\n- Re-running init should safely create only missing files and report skipped items; lightweight templates keep onboarding useful without heavy process overhead.",
+  "status": "proposed",
+  "created_at": "2026-03-19T20:39:31.156Z",
+  "updated_at": "2026-03-19T20:39:31.156Z"
+}

@@ -1,0 +1,53 @@
+{
+  "version": "1.0",
+  "task_id": "T-004",
+  "title": "Regression tests",
+  "type": "chore",
+  "status": "blocked",
+  "priority": "medium",
+  "summary": "Add coverage",
+  "goal": "Protect new endpoint",
+  "scope": {
+    "in_scope": [],
+    "out_of_scope": []
+  },
+  "context": {
+    "related_decisions": [],
+    "related_notes": []
+  },
+  "implementation": {
+    "files_to_read": [],
+    "files_to_avoid": []
+  },
+  "constraints": {
+    "technical": [],
+    "design": []
+  },
+  "execution": {
+    "commands": {
+      "validation": []
+    }
+  },
+  "dependencies": [
+    "T-003",
+    "T-004"
+  ],
+  "tags": [
+    "test"
+  ],
+  "target_areas": [],
+  "definition_of_done": [],
+  "tracking": {
+    "branch": "",
+    "worktree": "",
+    "assigned_agent_role": "tester",
+    "assigned_runner": "codex",
+    "assignment_reason": "tags/target_areas indicate testing",
+    "assigned_at": "2026-03-19T20:03:18.309Z"
+  },
+  "result": {
+    "summary": "",
+    "changed_files": [],
+    "validation_results": []
+  }
+}

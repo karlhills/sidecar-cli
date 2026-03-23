@@ -1,0 +1,37 @@
+{
+  "version": "1.0",
+  "run_id": "R-018",
+  "task_id": "T-001",
+  "runner_type": "codex",
+  "agent_role": "builder-app",
+  "status": "failed",
+  "branch": "",
+  "worktree": "/Volumes/AI/Projects/sidecar-cli",
+  "prompt_path": "/Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-018.md",
+  "started_at": "2026-03-19T20:48:43.962Z",
+  "completed_at": "2026-03-19T20:48:43.966Z",
+  "execution_started_at": "2026-03-19T20:48:43.965Z",
+  "execution_completed_at": "2026-03-19T20:48:43.966Z",
+  "command_string": "codex exec - < /Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-018.md",
+  "exit_code": 1,
+  "stdout_log_path": "/Volumes/AI/Projects/sidecar-cli/.sidecar/runs/R-018.stdout.log",
+  "stderr_log_path": "/Volumes/AI/Projects/sidecar-cli/.sidecar/runs/R-018.stderr.log",
+  "stdout_summary": "",
+  "stderr_summary": "spawnSync codex ENOENT",
+  "summary": "Codex failed to execute: spawnSync codex ENOENT",
+  "changed_files": [],
+  "commands_run": [
+    "codex exec - < /Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-018.md"
+  ],
+  "validation_results": [
+    "runner-process-error"
+  ],
+  "blockers": [
+    "Codex failed to execute: spawnSync codex ENOENT"
+  ],
+  "follow_ups": [],
+  "review_state": "pending",
+  "reviewed_at": null,
+  "reviewed_by": "",
+  "review_note": ""
+}

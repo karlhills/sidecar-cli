@@ -1,0 +1,57 @@
+{
+  "version": "1.0",
+  "task_id": "T-007",
+  "title": "Follow-up: API handler",
+  "type": "chore",
+  "status": "draft",
+  "priority": "medium",
+  "summary": "Dry run: prepared Codex command only.",
+  "goal": "Investigate run issues and apply required changes",
+  "scope": {
+    "in_scope": [],
+    "out_of_scope": []
+  },
+  "context": {
+    "related_decisions": [],
+    "related_notes": []
+  },
+  "implementation": {
+    "files_to_read": [
+      "src/cli.ts"
+    ],
+    "files_to_avoid": []
+  },
+  "constraints": {
+    "technical": [],
+    "design": []
+  },
+  "execution": {
+    "commands": {
+      "validation": []
+    }
+  },
+  "dependencies": [
+    "T-003"
+  ],
+  "tags": [
+    "backend",
+    "follow-up"
+  ],
+  "target_areas": [],
+  "definition_of_done": [
+    "Investigate run issues and apply required changes"
+  ],
+  "tracking": {
+    "branch": "",
+    "worktree": "",
+    "assigned_agent_role": null,
+    "assigned_runner": null,
+    "assignment_reason": "",
+    "assigned_at": null
+  },
+  "result": {
+    "summary": "",
+    "changed_files": [],
+    "validation_results": []
+  }
+}

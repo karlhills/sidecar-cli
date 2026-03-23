@@ -1,0 +1,35 @@
+{
+  "version": "1.0",
+  "run_id": "R-017",
+  "task_id": "T-001",
+  "runner_type": "codex",
+  "agent_role": "builder-app",
+  "status": "completed",
+  "branch": "",
+  "worktree": "/Volumes/AI/Projects/sidecar-cli",
+  "prompt_path": "/Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-017.md",
+  "started_at": "2026-03-19T20:47:40.387Z",
+  "completed_at": "2026-03-19T20:48:15.671Z",
+  "execution_started_at": "2026-03-19T20:47:40.391Z",
+  "execution_completed_at": "2026-03-19T20:48:15.670Z",
+  "command_string": "codex exec - < /Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-017.md",
+  "exit_code": 0,
+  "stdout_log_path": "/Volumes/AI/Projects/sidecar-cli/.sidecar/runs/R-017.stdout.log",
+  "stderr_log_path": "/Volumes/AI/Projects/sidecar-cli/.sidecar/runs/R-017.stderr.log",
+  "stdout_summary": "`task create`, `task list`, and `task show` are working end-to-end in this repo; no code changes were needed.\n\nFiles changed with reasons:\n- None in source code.\n- Runtime data created by smoke test: `.sidecar/tasks/T-008.json` (new task packet created to validate flow).\n\nValidation commands run and...",
+  "stderr_summary": "2026-03-19T20:47:45.413911Z ERROR codex_core::models_manager::manager: failed to refresh available models: timeout waiting for child process to exit\nOpenAI Codex v0.115.0 (research preview)\n--------\nworkdir: /Volumes/AI/Projects/sidecar-cli\nmodel: gpt-5.3-codex\nprovider: openai\napproval: never\nsandb...",
+  "summary": "Codex execution completed successfully (exit 0). Output: `task create`, `task list`, and `task show` are working end-to-end in this repo; no code changes were needed.\n\nFiles changed with reasons:\n- None in source code.\n- Runtime data created by smoke test: `.sidecar/tasks/T-008.json` (new task packet created to validate flow).\n\nValidation commands run and...",
+  "changed_files": [],
+  "commands_run": [
+    "codex exec - < /Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-017.md"
+  ],
+  "validation_results": [
+    "process-exit:0"
+  ],
+  "blockers": [],
+  "follow_ups": [],
+  "review_state": "pending",
+  "reviewed_at": null,
+  "reviewed_by": "",
+  "review_note": ""
+}

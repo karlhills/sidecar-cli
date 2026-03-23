@@ -2,7 +2,7 @@
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 
 const args = process.argv.slice(2);
 const enforce = args.includes('--enforce');
@@ -85,7 +85,7 @@ if (!fs.existsSync(dbPath)) {
   process.exit(0);
 }
 
-const db = new Database(dbPath, { readonly: true });
+const db = new DatabaseSync(dbPath, { readOnly: true });
 const lastCommitAt = (() => {
   try {
     const ts = sh('git log -1 --format=%cI');

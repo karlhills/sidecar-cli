@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "run_id": "R-006",
+  "task_id": "T-001",
+  "runner_type": "claude",
+  "agent_role": "reviewer",
+  "status": "completed",
+  "branch": "",
+  "worktree": "/Volumes/AI/Projects/sidecar-cli",
+  "prompt_path": "/Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-006.md",
+  "started_at": "2026-03-19T19:56:39.507Z",
+  "completed_at": "2026-03-19T19:56:39.510Z",
+  "summary": "Prepared Claude command. Live execution is placeholder behavior in v1.",
+  "changed_files": [],
+  "commands_run": [
+    "claude run --prompt-file /Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-006.md --role reviewer"
+  ],
+  "validation_results": [
+    "runner execute placeholder"
+  ],
+  "blockers": [],
+  "follow_ups": [
+    "Integrate real Claude command execution in runner adapter."
+  ]
+}

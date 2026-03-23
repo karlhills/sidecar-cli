@@ -109,7 +109,10 @@ export function launchUiServer(options: {
 
   const child = spawn(process.execPath, [serverPath, '--project', options.projectPath, '--port', String(options.port)], {
     stdio: 'inherit',
-    env: { ...process.env },
+    env: {
+      ...process.env,
+      SIDECAR_CLI_JS: process.argv[1] || '',
+    },
   });
 
   const url = `http://localhost:${options.port}`;

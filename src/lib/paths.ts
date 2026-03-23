@@ -6,6 +6,9 @@ export const SIDECAR_DIR = '.sidecar';
 export interface SidecarPaths {
   rootPath: string;
   sidecarPath: string;
+  tasksPath: string;
+  runsPath: string;
+  promptsPath: string;
   rootAgentsPath: string;
   rootClaudePath: string;
   dbPath: string;
@@ -20,6 +23,9 @@ export function getSidecarPaths(rootPath: string): SidecarPaths {
   return {
     rootPath,
     sidecarPath,
+    tasksPath: path.join(sidecarPath, 'tasks'),
+    runsPath: path.join(sidecarPath, 'runs'),
+    promptsPath: path.join(sidecarPath, 'prompts'),
     rootAgentsPath: path.join(rootPath, 'AGENTS.md'),
     rootClaudePath: path.join(rootPath, 'CLAUDE.md'),
     dbPath: path.join(sidecarPath, 'sidecar.db'),

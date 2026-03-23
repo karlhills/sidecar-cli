@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import readline from 'node:readline/promises';
 import { Command } from 'commander';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
 import { initializeSchema } from './db/schema.js';
 import { findSidecarRoot, getSidecarPaths } from './lib/paths.js';
@@ -19,18 +20,27 @@ import { buildContext } from './services/context-service.js';
 import { getCapabilitiesManifest } from './services/capabilities-service.js';
 import { addArtifact, listArtifacts } from './services/artifact-service.js';
 import { addDecision, addNote, addWorklog, getActiveSessionId, listRecentEvents } from './services/event-service.js';
-import { addTask, listTasks, markTaskDone } from './services/task-service.js';
 import { currentSession, endSession, startSession, verifySessionHygiene } from './services/session-service.js';
 import { eventIngestSchema, ingestEvent } from './services/event-ingest-service.js';
 import { buildExportJson, buildExportJsonlEvents, writeOutputFile } from './services/export-service.js';
-import type { ActorType, ArtifactKind, SidecarConfig, TaskPriority } from './types/models.js';
+import { createTaskPacketRecord, getTaskPacket, listTaskPackets } from './tasks/task-service.js';
+import { taskPacketPrioritySchema, taskPacketStatusSchema, taskPacketTypeSchema } from './tasks/task-packet.js';
+import { getRunRecord, listRunRecords, listRunRecordsForTask } from './runs/run-service.js';
+import { runStatusSchema, runnerTypeSchema } from './runs/run-record.js';
+import { compileTaskPrompt } from './prompts/prompt-service.js';
+import { runTaskExecution } from './services/run-orchestrator-service.js';
+import { loadRunnerPreferences } from './runners/config.js';
+import { assignTask, queueReadyTasks } from './services/task-orchestration-service.js';
+import { buildReviewSummary, createFollowupTaskFromRun, reviewRun } from './services/run-review-service.js';
+import type { ActorType, ArtifactKind, SidecarConfig } from './types/models.js';
 
 const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
 
 const actorSchema = z.enum(['human', 'agent']);
-const taskPrioritySchema = z.enum(['low', 'medium', 'high']);
 const artifactKindSchema = z.enum(['file', 'doc', 'screenshot', 'other']);
-const taskStatusSchema = z.enum(['open', 'done', 'all']);
+const taskListStatusSchema = z.enum(['draft', 'ready', 'queued', 'running', 'review', 'blocked', 'done', 'all']);
+const runListStatusSchema = runStatusSchema.or(z.literal('all'));
+const agentRoleSchema = z.enum(['planner', 'builder-ui', 'builder-app', 'reviewer', 'tester']);
 const exportFormatSchema = z.enum(['json', 'jsonl']);
 
 const NOT_INITIALIZED_MSG = 'Sidecar is not initialized in this directory or any parent directory';
@@ -39,7 +49,7 @@ function fail(message: string): never {
   throw new SidecarError(message);
 }
 
-function maybeSessionId(db: Database.Database, projectId: number, explicit?: string): number | null {
+function maybeSessionId(db: DatabaseSync, projectId: number, explicit?: string): number | null {
   if (explicit) {
     const parsed = Number.parseInt(explicit, 10);
     if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -70,7 +80,7 @@ function respondSuccess(command: string, asJson: boolean, data: unknown, lines: 
   }
 }
 
-function summaryWasRefreshedRecently(db: Database.Database, projectId: number): boolean {
+function summaryWasRefreshedRecently(db: DatabaseSync, projectId: number): boolean {
   return Boolean(
     db
       .prepare(`SELECT id FROM events WHERE project_id = ? AND type = 'summary_generated' AND created_at >= datetime('now', '-3 day') LIMIT 1`)
@@ -201,6 +211,25 @@ function resolveProjectRoot(projectPath?: string): string {
   return root;
 }
 
+function parseCsvOption(input?: string): string[] {
+  if (!input) return [];
+  return input
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+async function askWithDefault(
+  rl: readline.Interface,
+  question: string,
+  fallback?: string
+): Promise<string> {
+  const suffix = fallback ? ` [${fallback}]` : '';
+  const answer = (await rl.question(`${question}${suffix}: `)).trim();
+  if (answer.length > 0) return answer;
+  return fallback ?? '';
+}
+
 const program = new Command();
 program.name('sidecar').description('Local-first project memory and recording CLI').version(pkg.version);
 program.option('--no-banner', 'Disable Sidecar banner output');
@@ -306,6 +335,9 @@ program
       }
 
       const files = [
+        sidecar.tasksPath,
+        sidecar.runsPath,
+        sidecar.promptsPath,
         sidecar.dbPath,
         sidecar.configPath,
         sidecar.preferencesPath,
@@ -327,12 +359,15 @@ program
           sidecar.preferencesPath,
           sidecar.agentsPath,
           sidecar.summaryPath,
+          sidecar.tasksPath,
+          sidecar.runsPath,
+          sidecar.promptsPath,
         ]) {
-          if (fs.existsSync(file)) fs.rmSync(file);
+          if (fs.existsSync(file)) fs.rmSync(file, { recursive: true, force: true });
         }
       }
 
-      const db = new Database(sidecar.dbPath);
+      const db = new DatabaseSync(sidecar.dbPath);
       initializeSchema(db);
       const ts = nowIso();
       db.prepare(`DELETE FROM projects`).run();
@@ -347,11 +382,19 @@ program
       };
 
       fs.writeFileSync(sidecar.configPath, stringifyJson(config));
+      fs.mkdirSync(sidecar.tasksPath, { recursive: true });
+      fs.mkdirSync(sidecar.runsPath, { recursive: true });
+      fs.mkdirSync(sidecar.promptsPath, { recursive: true });
       fs.writeFileSync(
         sidecar.preferencesPath,
         stringifyJson({
           summary: { format: 'markdown', recentLimit: 8 },
           output: { humanTime: true },
+          runner: {
+            defaultRunner: 'codex',
+            preferredRunners: ['codex', 'claude'],
+            defaultAgentRole: 'builder-app',
+          },
         })
       );
       fs.writeFileSync(sidecar.agentsPath, renderAgentsMarkdown(projectName));
@@ -362,7 +405,7 @@ program
         fs.writeFileSync(sidecar.rootClaudePath, renderClaudeMarkdown(projectName));
       }
 
-      const db2 = new Database(sidecar.dbPath);
+      const db2 = new DatabaseSync(sidecar.dbPath);
       const refreshed = refreshSummaryFile(db2, rootPath, 1, 10);
       db2.close();
 
@@ -779,26 +822,89 @@ worklog
 
 const task = program.command('task').description('Task commands');
 task
-  .command('add <title>')
-  .description('Create an open task')
-  .option('--description <text>', 'Description')
+  .command('create')
+  .description('Create a structured task packet')
+  .option('--title <title>', 'Task title')
+  .option('--type <type>', 'feature|bug|chore|research', 'chore')
+  .option('--status <status>', 'draft|ready|queued|running|review|blocked|done', 'draft')
   .option('--priority <priority>', 'low|medium|high', 'medium')
-  .option('--by <actor>', 'human|agent', 'human')
+  .option('--summary <summary>', 'Task summary')
+  .option('--goal <goal>', 'Task goal')
+  .option('--dependencies <task-ids>', 'Comma-separated dependency task IDs')
+  .option('--tags <tags>', 'Comma-separated tags')
+  .option('--target-areas <areas>', 'Comma-separated target areas')
+  .option('--scope-in <items>', 'Comma-separated in-scope items')
+  .option('--scope-out <items>', 'Comma-separated out-of-scope items')
+  .option('--related-decisions <items>', 'Comma-separated related decision IDs/titles')
+  .option('--related-notes <items>', 'Comma-separated related notes')
+  .option('--files-read <paths>', 'Comma-separated files to read')
+  .option('--files-avoid <paths>', 'Comma-separated files to avoid')
+  .option('--constraint-tech <items>', 'Comma-separated technical constraints')
+  .option('--constraint-design <items>', 'Comma-separated design constraints')
+  .option('--validate-cmds <commands>', 'Comma-separated validation commands')
+  .option('--dod <items>', 'Comma-separated definition-of-done checks')
+  .option('--branch <name>', 'Branch name')
+  .option('--worktree <path>', 'Worktree path')
   .option('--json', 'Print machine-readable JSON output')
-  .addHelpText('after', '\nExamples:\n  $ sidecar task add "Ship v0.1"\n  $ sidecar task add "Add tests" --priority high --by agent')
-  .action((title, opts) => {
-    const command = 'task add';
+  .addHelpText(
+    'after',
+    '\nExamples:\n  $ sidecar task create\n  $ sidecar task create --title "Add import support" --summary "Support JSON import" --goal "Enable scripted import flow" --priority high\n  $ sidecar task create --title "Refactor parser" --files-read src/parser.ts,src/types.ts --dod "Tests pass,Docs updated"'
+  )
+  .action(async (opts) => {
+    const command = 'task create';
     try {
-      const priority = taskPrioritySchema.parse(opts.priority as TaskPriority);
-      const by = actorSchema.parse(opts.by as ActorType);
-      const { db, projectId } = requireInitialized();
-      const result = addTask(db, { projectId, title, description: opts.description, priority, by });
-      db.close();
+      const rootPath = resolveProjectRoot();
+      let title = opts.title?.trim() ?? '';
+      let summary = opts.summary?.trim() ?? '';
+      let goal = opts.goal?.trim() ?? '';
+
+      if (!title || !summary || !goal) {
+        if (!process.stdin.isTTY) {
+          fail('Missing required fields. Provide --title, --summary, and --goal when not running interactively.');
+        }
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        try {
+          title = title || (await askWithDefault(rl, 'Title'));
+          summary = summary || (await askWithDefault(rl, 'Summary', title));
+          goal = goal || (await askWithDefault(rl, 'Goal', `Complete: ${title}`));
+        } finally {
+          rl.close();
+        }
+      }
+
+      const type = taskPacketTypeSchema.parse(opts.type);
+      const status = taskPacketStatusSchema.parse(opts.status);
+      const priority = taskPacketPrioritySchema.parse(opts.priority);
+
+      const created = createTaskPacketRecord(rootPath, {
+        title,
+        summary,
+        goal,
+        type,
+        status,
+        priority,
+        scope_in_scope: parseCsvOption(opts.scopeIn),
+        scope_out_of_scope: parseCsvOption(opts.scopeOut),
+        related_decisions: parseCsvOption(opts.relatedDecisions),
+        related_notes: parseCsvOption(opts.relatedNotes),
+        files_to_read: parseCsvOption(opts.filesRead),
+        files_to_avoid: parseCsvOption(opts.filesAvoid),
+        technical_constraints: parseCsvOption(opts.constraintTech),
+        design_constraints: parseCsvOption(opts.constraintDesign),
+        validation_commands: parseCsvOption(opts.validateCmds),
+        dependencies: parseCsvOption(opts.dependencies).map((v) => v.toUpperCase()),
+        tags: parseCsvOption(opts.tags),
+        target_areas: parseCsvOption(opts.targetAreas),
+        definition_of_done: parseCsvOption(opts.dod),
+        branch: opts.branch?.trim(),
+        worktree: opts.worktree?.trim(),
+      });
+
       respondSuccess(
         command,
         Boolean(opts.json),
-        { task: { id: result.taskId, title, description: opts.description ?? null, status: 'open', priority }, event: { id: result.eventId, type: 'task_created' } },
-        [`Added task #${result.taskId}.`]
+        { task: created.task, path: created.path },
+        [`Created task ${created.task.task_id}.`, `Path: ${created.path}`]
       );
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
@@ -806,22 +912,19 @@ task
   });
 
 task
-  .command('done <task-id>')
-  .description('Mark a task as done')
-  .option('--by <actor>', 'human|agent', 'human')
+  .command('show <task-id>')
+  .description('Show a task packet by id')
   .option('--json', 'Print machine-readable JSON output')
-  .addHelpText('after', '\nExamples:\n  $ sidecar task done 3\n  $ sidecar task done 3 --json')
+  .addHelpText('after', '\nExamples:\n  $ sidecar task show T-001\n  $ sidecar task show T-001 --json')
   .action((taskIdText, opts) => {
-    const command = 'task done';
+    const command = 'task show';
     try {
-      const taskId = Number.parseInt(taskIdText, 10);
-      if (!Number.isInteger(taskId) || taskId <= 0) fail('Task id must be a positive integer');
-      const by = actorSchema.parse(opts.by as ActorType);
-      const { db, projectId } = requireInitialized();
-      const result = markTaskDone(db, { projectId, taskId, by });
-      db.close();
-      if (!result.ok) fail(result.reason);
-      respondSuccess(command, Boolean(opts.json), { task: { id: taskId, status: 'done' }, event: { id: result.eventId, type: 'task_completed' } }, [`Completed task #${taskId}.`]);
+      const task = getTaskPacket(resolveProjectRoot(), taskIdText.trim().toUpperCase());
+      if (opts.json) {
+        respondSuccess(command, true, { task }, []);
+        return;
+      }
+      console.log(stringifyJson(task));
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }
@@ -829,42 +932,363 @@ task
 
 task
   .command('list')
-  .description('List tasks by status')
-  .option('--status <status>', 'open|done|all', 'open')
-  .option('--format <format>', 'table|json', 'table')
+  .description('List task packets')
+  .option('--status <status>', 'draft|ready|queued|running|review|blocked|done|all', 'all')
   .option('--json', 'Print machine-readable JSON output')
-  .addHelpText('after', '\nExamples:\n  $ sidecar task list\n  $ sidecar task list --status all --format json')
+  .addHelpText('after', '\nExamples:\n  $ sidecar task list\n  $ sidecar task list --status open\n  $ sidecar task list --json')
   .action((opts) => {
     const command = 'task list';
     try {
-      const status = taskStatusSchema.parse(opts.status as 'open' | 'done' | 'all');
-      const { db, projectId } = requireInitialized();
-      const rows = listTasks(db, { projectId, status });
-      db.close();
+      const status = taskListStatusSchema.parse(
+        opts.status as 'draft' | 'ready' | 'queued' | 'running' | 'review' | 'blocked' | 'done' | 'all'
+      );
+      const tasks = listTaskPackets(resolveProjectRoot());
+      const rows = status === 'all' ? tasks : tasks.filter((task) => task.status === status);
 
-      if (opts.format === 'json' || opts.json) {
-        if (opts.json) printJsonEnvelope(jsonSuccess(command, { status, tasks: rows }));
-        else console.log(stringifyJson(rows));
+      if (opts.json) {
+        respondSuccess(command, true, { status, tasks: rows }, []);
         return;
       }
 
-      const taskRows = rows as Array<{ id: number; status: string; priority: string | null; title: string; updated_at: string }>;
-      if (taskRows.length === 0) {
+      if (rows.length === 0) {
         console.log('No tasks found.');
         return;
       }
-      const idWidth = Math.max(2, ...taskRows.map((r) => String(r.id).length));
-      const statusWidth = Math.max(6, ...taskRows.map((r) => r.status.length));
-      const priorityWidth = Math.max(8, ...taskRows.map((r) => (r.priority ?? 'n/a').length));
-      console.log(
-        `${'ID'.padEnd(idWidth)}  ${'STATUS'.padEnd(statusWidth)}  ${'PRIORITY'.padEnd(priorityWidth)}  TITLE`
-      );
-      for (const row of taskRows) {
-        const id = String(row.id).padEnd(idWidth);
-        const statusLabel = row.status.padEnd(statusWidth);
-        const prio = (row.priority ?? 'n/a').padEnd(priorityWidth);
-        console.log(`${id}  ${statusLabel}  ${prio}  ${row.title}`);
+
+      const idWidth = Math.max(6, ...rows.map((r) => r.task_id.length));
+      const statusWidth = Math.max(11, ...rows.map((r) => r.status.length));
+      const priorityWidth = Math.max(8, ...rows.map((r) => r.priority.length));
+      console.log(`${'TASK ID'.padEnd(idWidth)}  ${'STATUS'.padEnd(statusWidth)}  ${'PRIORITY'.padEnd(priorityWidth)}  TITLE`);
+      for (const row of rows) {
+        console.log(
+          `${row.task_id.padEnd(idWidth)}  ${row.status.padEnd(statusWidth)}  ${row.priority.padEnd(priorityWidth)}  ${row.title}`
+        );
       }
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
+task
+  .command('assign <task-id>')
+  .description('Auto-assign agent role and runner for a task')
+  .option('--agent-role <role>', 'planner|builder-ui|builder-app|reviewer|tester')
+  .option('--runner <runner>', 'codex|claude')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText(
+    'after',
+    '\nExamples:\n  $ sidecar task assign T-001\n  $ sidecar task assign T-001 --agent-role builder-ui --runner codex\n  $ sidecar task assign T-001 --json'
+  )
+  .action((taskIdText, opts) => {
+    const command = 'task assign';
+    try {
+      const rootPath = resolveProjectRoot();
+      const result = assignTask(rootPath, taskIdText.trim().toUpperCase(), {
+        role: opts.agentRole ? agentRoleSchema.parse(opts.agentRole as string) : undefined,
+        runner: opts.runner ? runnerTypeSchema.parse(opts.runner as string) : undefined,
+      });
+      respondSuccess(command, Boolean(opts.json), result, [
+        `Assigned ${result.task_id}.`,
+        `Role: ${result.agent_role}`,
+        `Runner: ${result.runner}`,
+        `Reason: ${result.reason}`,
+      ]);
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
+task
+  .command('create-followup <run-id>')
+  .description('Create a follow-up task packet from a run report')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText(
+    'after',
+    '\nExamples:\n  $ sidecar task create-followup R-010\n  $ sidecar task create-followup R-010 --json'
+  )
+  .action((runIdText, opts) => {
+    const command = 'task create-followup';
+    try {
+      const result = createFollowupTaskFromRun(resolveProjectRoot(), runIdText.trim().toUpperCase());
+      respondSuccess(command, Boolean(opts.json), result, [
+        `Created follow-up task ${result.task_id}.`,
+        `Source run: ${result.source_run_id}`,
+        `Title: ${result.title}`,
+      ]);
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
+const prompt = program.command('prompt').description('Prompt compilation commands');
+prompt
+  .command('compile <task-id>')
+  .description('Compile a markdown execution brief from a task packet')
+  .requiredOption('--runner <runner>', 'codex|claude')
+  .requiredOption('--agent-role <role>', 'Agent role, for example builder')
+  .option('--preview', 'Print compiled prompt content after writing file')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText(
+    'after',
+    '\nExamples:\n  $ sidecar prompt compile T-001 --runner codex --agent-role builder\n  $ sidecar prompt compile T-001 --runner claude --agent-role builder --preview\n  $ sidecar prompt compile T-001 --runner codex --agent-role reviewer --json'
+  )
+  .action((taskIdText, opts) => {
+    const command = 'prompt compile';
+    try {
+      const rootPath = resolveProjectRoot();
+      const taskId = taskIdText.trim().toUpperCase();
+      const runner = runnerTypeSchema.parse(opts.runner as string);
+      const agentRole = String(opts.agentRole ?? '').trim();
+      if (!agentRole) fail('Agent role is required');
+
+      const compiled = compileTaskPrompt({
+        rootPath,
+        taskId,
+        runner,
+        agentRole,
+      });
+
+      respondSuccess(
+        command,
+        Boolean(opts.json),
+        {
+          run_id: compiled.run_id,
+          task_id: compiled.task_id,
+          runner_type: compiled.runner_type,
+          agent_role: compiled.agent_role,
+          prompt_path: compiled.prompt_path,
+          preview: opts.preview ? compiled.prompt_markdown : null,
+        },
+        [
+          `Compiled prompt for ${compiled.task_id}.`,
+          `Run: ${compiled.run_id}`,
+          `Path: ${compiled.prompt_path}`,
+          ...(opts.preview ? ['', compiled.prompt_markdown] : []),
+        ]
+      );
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
+program
+  .command('run-exec <task-id>')
+  .description('Internal command backing `sidecar run <task-id>`')
+  .option('--runner <runner>', 'codex|claude')
+  .option('--agent-role <role>', 'planner|builder-ui|builder-app|reviewer|tester')
+  .option('--dry-run', 'Prepare and compile only without executing external runner')
+  .option('--json', 'Print machine-readable JSON output')
+  .action((taskIdText, opts) => {
+    const command = 'run';
+    try {
+      const rootPath = resolveProjectRoot();
+      const defaults = loadRunnerPreferences(rootPath);
+      const selectedRunner = opts.runner ? runnerTypeSchema.parse(opts.runner as string) : defaults.default_runner;
+      const selectedAgentRole = opts.agentRole
+        ? agentRoleSchema.parse(opts.agentRole as string)
+        : defaults.default_agent_role;
+
+      const result = runTaskExecution({
+        rootPath,
+        taskId: String(taskIdText).trim().toUpperCase(),
+        runner: selectedRunner,
+        agentRole: selectedAgentRole,
+        dryRun: Boolean(opts.dryRun),
+      });
+
+      respondSuccess(command, Boolean(opts.json), result, [
+        `Prepared run ${result.run_id} for ${result.task_id}.`,
+        `Runner: ${result.runner_type} (${result.agent_role})`,
+        `Prompt: ${result.prompt_path}`,
+        `Command: ${result.shell_command}`,
+        `Status: ${result.status}`,
+        `Summary: ${result.summary}`,
+      ]);
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
+const run = program
+  .command('run')
+  .description('Run task execution or inspect run records')
+  .addHelpText(
+    'after',
+    '\nExamples:\n  $ sidecar run T-001 --dry-run\n  $ sidecar run T-001 --runner claude --agent-role reviewer\n  $ sidecar run queue\n  $ sidecar run start-ready --dry-run\n  $ sidecar run list --task T-001\n  $ sidecar run show R-001'
+  );
+
+run
+  .command('queue')
+  .description('Queue all ready tasks with satisfied dependencies')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText('after', '\nExamples:\n  $ sidecar run queue\n  $ sidecar run queue --json')
+  .action((opts) => {
+    const command = 'run queue';
+    try {
+      const rootPath = resolveProjectRoot();
+      const decisions = queueReadyTasks(rootPath);
+      respondSuccess(command, Boolean(opts.json), { decisions }, [
+        `Processed ${decisions.length} ready task(s).`,
+        ...decisions.map((d) => `- ${d.task_id}: ${d.reason}`),
+      ]);
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
+run
+  .command('start-ready')
+  .description('Queue and start all runnable ready tasks')
+  .option('--dry-run', 'Prepare and compile only without executing external runners')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText('after', '\nExamples:\n  $ sidecar run start-ready\n  $ sidecar run start-ready --dry-run --json')
+  .action((opts) => {
+    const command = 'run start-ready';
+    try {
+      const rootPath = resolveProjectRoot();
+      const queueDecisions = queueReadyTasks(rootPath);
+      const queuedTasks = listTaskPackets(rootPath).filter((task) => task.status === 'queued');
+      const results = queuedTasks.map((task) => runTaskExecution({ rootPath, taskId: task.task_id, dryRun: Boolean(opts.dryRun) }));
+      respondSuccess(command, Boolean(opts.json), { queued: queueDecisions, results }, [
+        `Queued in this pass: ${queueDecisions.filter((d) => d.queued).length}`,
+        `Started: ${results.length}`,
+        ...results.map((r) => `- ${r.task_id} -> ${r.run_id} (${r.status})`),
+      ]);
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
+run
+  .command('approve <run-id>')
+  .description('Review a completed run as approved, needs changes, or merged')
+  .option('--state <state>', 'approved|needs_changes|merged', 'approved')
+  .option('--note <text>', 'Review note')
+  .option('--by <name>', 'Reviewer name', 'human')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText(
+    'after',
+    '\nExamples:\n  $ sidecar run approve R-010\n  $ sidecar run approve R-010 --state needs_changes --note "Address test failures"\n  $ sidecar run approve R-010 --state merged --json'
+  )
+  .action((runIdText, opts) => {
+    const command = 'run approve';
+    try {
+      const state = String(opts.state);
+      if (state !== 'approved' && state !== 'needs_changes' && state !== 'merged') {
+        fail('State must be one of: approved, needs_changes, merged');
+      }
+      const result = reviewRun(resolveProjectRoot(), runIdText.trim().toUpperCase(), state, {
+        note: opts.note,
+        by: opts.by,
+      });
+      respondSuccess(command, Boolean(opts.json), result, [
+        `Run ${result.run_id} marked ${result.review_state}.`,
+        `Task ${result.task_id} -> ${result.task_status}`,
+      ]);
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
+run
+  .command('block <run-id>')
+  .description('Mark a completed run as blocked and set linked task blocked')
+  .option('--note <text>', 'Blocking reason')
+  .option('--by <name>', 'Reviewer name', 'human')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText('after', '\nExamples:\n  $ sidecar run block R-010 --note "Migration failed"\n  $ sidecar run block R-010 --json')
+  .action((runIdText, opts) => {
+    const command = 'run block';
+    try {
+      const result = reviewRun(resolveProjectRoot(), runIdText.trim().toUpperCase(), 'blocked', {
+        note: opts.note,
+        by: opts.by,
+      });
+      respondSuccess(command, Boolean(opts.json), result, [
+        `Run ${result.run_id} marked blocked.`,
+        `Task ${result.task_id} -> ${result.task_status}`,
+      ]);
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
+run
+  .command('list')
+  .description('List execution run records')
+  .option('--task <task-id>', 'Filter by task id (for example T-001)')
+  .option('--status <status>', 'queued|preparing|running|review|blocked|completed|failed|all', 'all')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText('after', '\nExamples:\n  $ sidecar run list\n  $ sidecar run list --task T-001\n  $ sidecar run list --status completed --json')
+  .action((opts) => {
+    const command = 'run list';
+    try {
+      const rootPath = resolveProjectRoot();
+      const status = runListStatusSchema.parse(opts.status as string);
+      const base = opts.task ? listRunRecordsForTask(rootPath, String(opts.task).trim().toUpperCase()) : listRunRecords(rootPath);
+      const rows = status === 'all' ? base : base.filter((entry) => entry.status === status);
+
+      if (opts.json) {
+        respondSuccess(command, true, { status, task_id: opts.task ? String(opts.task).trim().toUpperCase() : null, runs: rows }, []);
+        return;
+      }
+
+      if (rows.length === 0) {
+        console.log('No run records found.');
+        return;
+      }
+
+      const idWidth = Math.max(6, ...rows.map((r) => r.run_id.length));
+      const taskWidth = Math.max(7, ...rows.map((r) => r.task_id.length));
+      const statusWidth = Math.max(10, ...rows.map((r) => r.status.length));
+      console.log(`${'RUN ID'.padEnd(idWidth)}  ${'TASK ID'.padEnd(taskWidth)}  ${'STATUS'.padEnd(statusWidth)}  STARTED`);
+      for (const row of rows) {
+        console.log(
+          `${row.run_id.padEnd(idWidth)}  ${row.task_id.padEnd(taskWidth)}  ${row.status.padEnd(statusWidth)}  ${humanTime(row.started_at)}`
+        );
+      }
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
+run
+  .command('summary')
+  .description('Show project-level run review summary')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText('after', '\nExamples:\n  $ sidecar run summary\n  $ sidecar run summary --json')
+  .action((opts) => {
+    const command = 'run summary';
+    try {
+      const data = buildReviewSummary(resolveProjectRoot());
+      respondSuccess(command, Boolean(opts.json), data, [
+        `Completed runs: ${data.completed_runs}`,
+        `Blocked runs: ${data.blocked_runs}`,
+        `Suggested follow-ups: ${data.suggested_follow_ups}`,
+        'Recently merged:',
+        ...(data.recently_merged.length
+          ? data.recently_merged.map((r) => `- ${r.run_id} (${r.task_id}) at ${humanTime(r.reviewed_at)}`)
+          : ['- none']),
+      ]);
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
+run
+  .command('show <run-id>')
+  .description('Show a run record by id')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText('after', '\nExamples:\n  $ sidecar run show R-001\n  $ sidecar run show R-001 --json')
+  .action((runIdText, opts) => {
+    const command = 'run show';
+    try {
+      const runRecord = getRunRecord(resolveProjectRoot(), runIdText.trim().toUpperCase());
+      if (opts.json) {
+        respondSuccess(command, true, { run: runRecord }, []);
+        return;
+      }
+      console.log(stringifyJson(runRecord));
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }
@@ -1025,6 +1449,21 @@ if (process.argv.length === 2) {
   program.outputHelp();
   maybePrintUpdateNotice();
   process.exit(0);
+}
+
+if (
+  process.argv[2] === 'run' &&
+  process.argv[3] &&
+  !process.argv[3].startsWith('-') &&
+  process.argv[3] !== 'list' &&
+  process.argv[3] !== 'show' &&
+  process.argv[3] !== 'queue' &&
+  process.argv[3] !== 'start-ready' &&
+  process.argv[3] !== 'approve' &&
+  process.argv[3] !== 'block' &&
+  process.argv[3] !== 'summary'
+) {
+  process.argv.splice(2, 1, 'run-exec');
 }
 
 program.parse(process.argv);

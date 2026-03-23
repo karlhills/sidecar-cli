@@ -1,0 +1,13 @@
+{
+  "update_id": "SU-007",
+  "source_type": "decision",
+  "source_id": "D-5",
+  "target_spec": "product",
+  "title": "Update product spec from decision",
+  "rationale": "This decision indicates durable product guidance that should stay documented.",
+  "proposed_summary": "Agents often miss nested .sidecar docs; root AGENTS.md and CLAUDE.md are now generated/maintained for deterministic discovery",
+  "proposed_patch_text": "## Core Features\n- Agents often miss nested .sidecar docs; root AGENTS.md and CLAUDE.md are now generated/maintained for deterministic discovery",
+  "status": "proposed",
+  "created_at": "2026-03-19T20:39:31.156Z",
+  "updated_at": "2026-03-19T20:39:31.156Z"
+}

@@ -1,12 +1,12 @@
 import fs from 'node:fs';
-import Database from 'better-sqlite3';
+import { DatabaseSync } from 'node:sqlite';
 
-export function openDb(dbPath: string): Database.Database {
-  return new Database(dbPath);
+export function openDb(dbPath: string): DatabaseSync {
+  return new DatabaseSync(dbPath);
 }
 
-export function migrate(db: Database.Database): void {
-  db.pragma('journal_mode = WAL');
+export function migrate(db: DatabaseSync): void {
+  db.exec('PRAGMA journal_mode = WAL;');
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS events (

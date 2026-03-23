@@ -1,0 +1,13 @@
+{
+  "update_id": "SU-003",
+  "source_type": "decision",
+  "source_id": "D-30",
+  "target_spec": "architecture",
+  "title": "Update architecture spec from decision",
+  "rationale": "This decision indicates durable architecture guidance that should stay documented.",
+  "proposed_summary": "A deterministic rules engine keeps assignment behavior understandable and overridable while enforcing dependency gates before starting ready tasks.",
+  "proposed_patch_text": "## Constraints\n- A deterministic rules engine keeps assignment behavior understandable and overridable while enforcing dependency gates before starting ready tasks.",
+  "status": "proposed",
+  "created_at": "2026-03-19T20:39:31.156Z",
+  "updated_at": "2026-03-19T20:39:31.156Z"
+}

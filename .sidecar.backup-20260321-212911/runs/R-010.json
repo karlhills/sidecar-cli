@@ -1,0 +1,27 @@
+{
+  "version": "1.0",
+  "run_id": "R-010",
+  "task_id": "T-005",
+  "runner_type": "codex",
+  "agent_role": "builder-ui",
+  "status": "completed",
+  "branch": "",
+  "worktree": "/Volumes/AI/Projects/sidecar-cli",
+  "prompt_path": "/Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-010.md",
+  "started_at": "2026-03-19T20:03:36.732Z",
+  "completed_at": "2026-03-19T20:03:36.734Z",
+  "summary": "Dry run: prepared Codex command only.",
+  "changed_files": [],
+  "commands_run": [
+    "codex run --prompt-file /Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-010.md --role builder-ui"
+  ],
+  "validation_results": [
+    "dry-run"
+  ],
+  "blockers": [],
+  "follow_ups": [],
+  "review_state": "needs_changes",
+  "reviewed_at": "2026-03-19T20:12:40.406Z",
+  "reviewed_by": "human",
+  "review_note": "Retry after fixing env"
+}

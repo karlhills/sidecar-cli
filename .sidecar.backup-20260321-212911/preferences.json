@@ -1,0 +1,20 @@
+{
+  "summary": {
+    "format": "markdown",
+    "recentLimit": 5
+  },
+  "output": {
+    "humanTime": false
+  },
+  "runner": {
+    "codex": {
+      "model": "gpt-5.3-codex",
+      "profile": "default",
+      "sandbox": "workspace-write",
+      "approval": "never",
+      "extraArgs": [
+        "--json"
+      ]
+    }
+  }
+}

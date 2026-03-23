@@ -1,0 +1,21 @@
+{
+  "version": "1.0",
+  "run_id": "R-002",
+  "task_id": "T-001",
+  "runner_type": "claude",
+  "agent_role": "reviewer",
+  "status": "review",
+  "branch": "next",
+  "worktree": "/Volumes/AI/Projects/sidecar-cli",
+  "prompt_path": ".sidecar/prompts/T-001.md",
+  "started_at": "2026-03-19T17:43:34.274Z",
+  "completed_at": null,
+  "summary": "Ready for review",
+  "changed_files": [],
+  "commands_run": [
+    "npm run build"
+  ],
+  "validation_results": [],
+  "blockers": [],
+  "follow_ups": []
+}

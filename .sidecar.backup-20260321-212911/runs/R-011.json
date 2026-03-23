@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "run_id": "R-011",
+  "task_id": "T-005",
+  "runner_type": "codex",
+  "agent_role": "builder-ui",
+  "status": "queued",
+  "branch": "",
+  "worktree": "",
+  "prompt_path": "/Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-011.md",
+  "started_at": "2026-03-19T20:08:41.765Z",
+  "completed_at": null,
+  "summary": "Compiled prompt for task T-005",
+  "changed_files": [],
+  "commands_run": [],
+  "validation_results": [],
+  "blockers": [],
+  "follow_ups": []
+}

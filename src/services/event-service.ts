@@ -1,4 +1,4 @@
-import type Database from 'better-sqlite3';
+import type { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { z } from 'zod';
 import { nowIso, splitCsv } from '../lib/format.js';
@@ -11,14 +11,14 @@ function normalizeArtifactPath(inputPath: string): string {
   return normalized.startsWith('./') ? normalized.slice(2) : normalized;
 }
 
-export function getActiveSessionId(db: Database.Database, projectId: number): number | null {
+export function getActiveSessionId(db: DatabaseSync, projectId: number): number | null {
   const row = db
     .prepare(`SELECT id FROM sessions WHERE project_id = ? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`)
     .get(projectId) as { id: number } | undefined;
   return row?.id ?? null;
 }
 
-export function createEvent(db: Database.Database, input: {
+export function createEvent(db: DatabaseSync, input: {
   projectId: number;
   type: EventType;
   title: string;
@@ -51,7 +51,7 @@ export function createEvent(db: Database.Database, input: {
   return Number(info.lastInsertRowid);
 }
 
-export function addNote(db: Database.Database, input: {
+export function addNote(db: DatabaseSync, input: {
   projectId: number;
   text: string;
   title?: string;
@@ -70,7 +70,7 @@ export function addNote(db: Database.Database, input: {
   });
 }
 
-export function addDecision(db: Database.Database, input: {
+export function addDecision(db: DatabaseSync, input: {
   projectId: number;
   title: string;
   summary: string;
@@ -89,7 +89,7 @@ export function addDecision(db: Database.Database, input: {
   });
 }
 
-export function addWorklog(db: Database.Database, input: {
+export function addWorklog(db: DatabaseSync, input: {
   projectId: number;
   goal?: string;
   done: string;
@@ -124,7 +124,7 @@ export function addWorklog(db: Database.Database, input: {
   return { eventId, files };
 }
 
-export function listRecentEvents(db: Database.Database, input: {
+export function listRecentEvents(db: DatabaseSync, input: {
   projectId: number;
   type?: string;
   limit: number;

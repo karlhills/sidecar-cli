@@ -1,0 +1,29 @@
+{
+  "version": "1.0",
+  "run_id": "R-013",
+  "task_id": "T-001",
+  "runner_type": "codex",
+  "agent_role": "builder-app",
+  "status": "completed",
+  "branch": "",
+  "worktree": "/Volumes/AI/Projects/sidecar-cli",
+  "prompt_path": "/Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-013.md",
+  "started_at": "2026-03-19T20:46:34.031Z",
+  "completed_at": "2026-03-19T20:46:34.034Z",
+  "summary": "Prepared Codex command. Live execution is placeholder behavior in v1.",
+  "changed_files": [],
+  "commands_run": [
+    "codex run --prompt-file /Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-013.md --role builder-app"
+  ],
+  "validation_results": [
+    "runner execute placeholder"
+  ],
+  "blockers": [],
+  "follow_ups": [
+    "Integrate real Codex command execution in runner adapter."
+  ],
+  "review_state": "pending",
+  "reviewed_at": null,
+  "reviewed_by": "",
+  "review_note": ""
+}

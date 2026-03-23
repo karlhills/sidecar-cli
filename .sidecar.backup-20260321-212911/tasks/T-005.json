@@ -1,0 +1,50 @@
+{
+  "version": "1.0",
+  "task_id": "T-005",
+  "title": "UI nav",
+  "type": "chore",
+  "status": "review",
+  "priority": "medium",
+  "summary": "Nav tweaks",
+  "goal": "Improve nav",
+  "scope": {
+    "in_scope": [],
+    "out_of_scope": []
+  },
+  "context": {
+    "related_decisions": [],
+    "related_notes": []
+  },
+  "implementation": {
+    "files_to_read": [],
+    "files_to_avoid": []
+  },
+  "constraints": {
+    "technical": [],
+    "design": []
+  },
+  "execution": {
+    "commands": {
+      "validation": []
+    }
+  },
+  "dependencies": [],
+  "tags": [
+    "ui"
+  ],
+  "target_areas": [],
+  "definition_of_done": [],
+  "tracking": {
+    "branch": "",
+    "worktree": "",
+    "assigned_agent_role": "builder-ui",
+    "assigned_runner": "codex",
+    "assignment_reason": "ui/frontend signal detected",
+    "assigned_at": "2026-03-19T20:03:36.512Z"
+  },
+  "result": {
+    "summary": "",
+    "changed_files": [],
+    "validation_results": []
+  }
+}

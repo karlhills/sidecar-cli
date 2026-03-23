@@ -1,0 +1,23 @@
+{
+  "version": "1.0",
+  "run_id": "R-005",
+  "task_id": "T-001",
+  "runner_type": "codex",
+  "agent_role": "builder",
+  "status": "completed",
+  "branch": "",
+  "worktree": "/Volumes/AI/Projects/sidecar-cli",
+  "prompt_path": "/Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-005.md",
+  "started_at": "2026-03-19T19:56:39.401Z",
+  "completed_at": "2026-03-19T19:56:39.403Z",
+  "summary": "Dry run: prepared Codex command only.",
+  "changed_files": [],
+  "commands_run": [
+    "codex run --prompt-file /Volumes/AI/Projects/sidecar-cli/.sidecar/prompts/R-005.md --role builder"
+  ],
+  "validation_results": [
+    "dry-run"
+  ],
+  "blockers": [],
+  "follow_ups": []
+}

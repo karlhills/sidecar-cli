@@ -3,9 +3,9 @@ import { nowIso } from '../lib/format.js';
 import { getSidecarPaths } from '../lib/paths.js';
 import { renderSummaryMarkdown } from '../templates/summary.js';
 import { createEvent } from './event-service.js';
-import type Database from 'better-sqlite3';
+import type { DatabaseSync } from 'node:sqlite';
 
-export function readSummaryInputs(db: Database.Database, projectId: number, limit: number) {
+export function readSummaryInputs(db: DatabaseSync, projectId: number, limit: number) {
   const project = db.prepare(`SELECT name, root_path FROM projects WHERE id = ?`).get(projectId) as {
     name: string;
     root_path: string;
@@ -58,7 +58,7 @@ export function readSummaryInputs(db: Database.Database, projectId: number, limi
   };
 }
 
-export function refreshSummaryFile(db: Database.Database, rootPath: string, projectId: number, limit = 10) {
+export function refreshSummaryFile(db: DatabaseSync, rootPath: string, projectId: number, limit = 10) {
   const sidecarPaths = getSidecarPaths(rootPath);
   const data = readSummaryInputs(db, projectId, limit);
   const generatedAt = nowIso();

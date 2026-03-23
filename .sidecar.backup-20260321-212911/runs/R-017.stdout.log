@@ -1,0 +1,16 @@
+`task create`, `task list`, and `task show` are working end-to-end in this repo; no code changes were needed.
+
+Files changed with reasons:
+- None in source code.
+- Runtime data created by smoke test: `.sidecar/tasks/T-008.json` (new task packet created to validate flow).
+
+Validation commands run and results:
+- `npm run build` -> passed.
+- `node dist/cli.js context --format markdown` -> passed.
+- `node dist/cli.js task create --title "Task packet smoke <timestamp>" --summary "Smoke validation for create/list/show" --goal "Ensure create/list/show work" --type chore --priority medium --status review --json` -> passed, created `T-008`.
+- `node dist/cli.js task show T-008 --json` -> passed, returned created task.
+- `node dist/cli.js task list --json` -> passed, included `T-008` in results.
+
+Risks, blockers, or follow-up tasks:
+- No blockers found.
+- No code-level follow-up required from this smoke check.

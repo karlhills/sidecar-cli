@@ -1,0 +1,52 @@
+{
+  "version": "1.0",
+  "task_id": "T-003",
+  "title": "API handler",
+  "type": "chore",
+  "status": "blocked",
+  "priority": "medium",
+  "summary": "Add endpoint",
+  "goal": "Support import endpoint",
+  "scope": {
+    "in_scope": [],
+    "out_of_scope": []
+  },
+  "context": {
+    "related_decisions": [],
+    "related_notes": []
+  },
+  "implementation": {
+    "files_to_read": [
+      "src/cli.ts"
+    ],
+    "files_to_avoid": []
+  },
+  "constraints": {
+    "technical": [],
+    "design": []
+  },
+  "execution": {
+    "commands": {
+      "validation": []
+    }
+  },
+  "dependencies": [],
+  "tags": [
+    "backend"
+  ],
+  "target_areas": [],
+  "definition_of_done": [],
+  "tracking": {
+    "branch": "",
+    "worktree": "",
+    "assigned_agent_role": "builder-app",
+    "assigned_runner": "codex",
+    "assignment_reason": "default app implementation path",
+    "assigned_at": "2026-03-19T20:03:18.208Z"
+  },
+  "result": {
+    "summary": "",
+    "changed_files": [],
+    "validation_results": []
+  }
+}
