@@ -11,6 +11,7 @@ export interface SidecarPaths {
   promptsPath: string;
   rootAgentsPath: string;
   rootClaudePath: string;
+  rootInstructionsPath: string;
   dbPath: string;
   configPath: string;
   preferencesPath: string;
@@ -28,6 +29,7 @@ export function getSidecarPaths(rootPath: string): SidecarPaths {
     promptsPath: path.join(sidecarPath, 'prompts'),
     rootAgentsPath: path.join(rootPath, 'AGENTS.md'),
     rootClaudePath: path.join(rootPath, 'CLAUDE.md'),
+    rootInstructionsPath: path.join(rootPath, 'instructions.md'),
     dbPath: path.join(sidecarPath, 'sidecar.db'),
     configPath: path.join(sidecarPath, 'config.json'),
     preferencesPath: path.join(sidecarPath, 'preferences.json'),

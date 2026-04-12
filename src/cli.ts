@@ -9,6 +9,7 @@ import { initializeSchema } from './db/schema.js';
 import { findSidecarRoot, getSidecarPaths } from './lib/paths.js';
 import { nowIso, humanTime, stringifyJson } from './lib/format.js';
 import { SidecarError } from './lib/errors.js';
+import { GLOBAL_INSTRUCTIONS_DIR, resolveInstructionsSource } from './lib/instructions.js';
 import { jsonFailure, jsonSuccess, printJsonEnvelope } from './lib/output.js';
 import { bannerDisabled, renderBanner } from './lib/banner.js';
 import { getUpdateNotice } from './lib/update-check.js';
@@ -309,10 +310,15 @@ program
   .description('Initialize Sidecar in the current directory')
   .option('--force', 'Overwrite Sidecar files if they already exist')
   .option('--name <project-name>', 'Project name (defaults to current directory name)')
+  .option(
+    '--instructions-template <name>',
+    `Load instructions template by name from ${GLOBAL_INSTRUCTIONS_DIR} (example: "web-app")`
+  )
+  .option('--instructions-file <path>', 'Load instructions from a specific markdown file path')
   .option('--json', 'Print machine-readable JSON output')
   .addHelpText(
     'after',
-    '\nExamples:\n  $ sidecar init\n  $ sidecar init --name "My Project"\n  $ sidecar init --force --json'
+    '\nExamples:\n  $ sidecar init\n  $ sidecar init --name "My Project"\n  $ sidecar init --instructions-template web-app\n  $ sidecar init --instructions-file ~/.sidecar-cli/instructions/desktop.md\n  $ sidecar init --force --json'
   )
   .action((opts) => {
     const command = 'init';
@@ -320,6 +326,11 @@ program
       const rootPath = process.cwd();
       const sidecar = getSidecarPaths(rootPath);
       const projectName = opts.name?.trim() || path.basename(rootPath);
+      const resolvedInstructions = resolveInstructionsSource({
+        templateName: opts.instructionsTemplate,
+        sourcePath: opts.instructionsFile,
+        cwd: rootPath,
+      });
       if (fs.existsSync(sidecar.sidecarPath)) {
         const stat = fs.lstatSync(sidecar.sidecarPath);
         if (stat.isSymbolicLink()) {
@@ -348,6 +359,15 @@ program
       const shouldWriteRootClaude = Boolean(opts.force) || !fs.existsSync(sidecar.rootClaudePath);
       if (shouldWriteRootAgents) files.push(sidecar.rootAgentsPath);
       if (shouldWriteRootClaude) files.push(sidecar.rootClaudePath);
+      if (resolvedInstructions) {
+        const canWriteInstructions = Boolean(opts.force) || !fs.existsSync(sidecar.rootInstructionsPath);
+        if (!canWriteInstructions) {
+          fail(
+            `Refusing to overwrite ${sidecar.rootInstructionsPath}. Re-run with --force or choose another destination.`
+          );
+        }
+        files.push(sidecar.rootInstructionsPath);
+      }
 
       fs.mkdirSync(sidecar.sidecarPath, { recursive: true });
       if (opts.force) {
@@ -404,6 +424,9 @@ program
       if (shouldWriteRootClaude) {
         fs.writeFileSync(sidecar.rootClaudePath, renderClaudeMarkdown(projectName));
       }
+      if (resolvedInstructions) {
+        fs.writeFileSync(sidecar.rootInstructionsPath, resolvedInstructions.content);
+      }
 
       const db2 = new DatabaseSync(sidecar.dbPath);
       const refreshed = refreshSummaryFile(db2, rootPath, 1, 10);
@@ -415,6 +438,7 @@ program
         projectName,
         filesCreated: files,
         summaryGeneratedAt: refreshed.generatedAt,
+        instructionsSource: resolvedInstructions?.sourceLabel ?? null,
         timestamp: nowIso(),
       };
 
@@ -428,6 +452,7 @@ program
         'Sidecar provides local project memory for decisions, work logs, tasks, and summaries.',
         'Created:',
         ...data.filesCreated.map((f) => `- ${f}`),
+        ...(resolvedInstructions ? ['', `Loaded instructions.md from ${resolvedInstructions.sourceLabel}`] : []),
         '',
         'Next step:',
         'sidecar context',

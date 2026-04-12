@@ -85,11 +85,40 @@ npm run dev -- --help
 
 ## Quick start
 
-Initialize in a project directory:
+1. Initialize in a project directory:
 
 ```bash
 sidecar init
 ```
+
+2. (Optional) Define shared instruction templates once:
+
+```bash
+mkdir -p ~/.sidecar-cli/instructions
+```
+
+Create template files such as:
+
+- `~/.sidecar-cli/instructions/web-app.md`
+- `~/.sidecar-cli/instructions/desktop-app.md`
+
+3. Initialize with a shared template (writes project `instructions.md`):
+
+```bash
+sidecar init --instructions-template web-app
+```
+
+Or load directly from a specific file:
+
+```bash
+sidecar init --instructions-file /absolute/path/to/instructions.md
+```
+
+Notes:
+
+- `--instructions-template <name>` resolves to `~/.sidecar-cli/instructions/<name>.md`.
+- Use either `--instructions-template` or `--instructions-file` (not both).
+- If `instructions.md` already exists, Sidecar will not overwrite it unless `--force` is used.
 
 This creates:
 
@@ -100,6 +129,7 @@ This creates:
 - `.sidecar/summary.md`
 - `AGENTS.md` (repo root)
 - `CLAUDE.md` (repo root)
+- `instructions.md` (repo root, only when `--instructions-template` or `--instructions-file` is provided)
 
 Use `--force` to overwrite Sidecar-managed files.
 
@@ -107,7 +137,7 @@ Use `--force` to overwrite Sidecar-managed files.
 
 Global:
 
-- `sidecar init [--force] [--name <project-name>] [--json]`
+- `sidecar init [--force] [--name <project-name>] [--instructions-template <name>] [--instructions-file <path>] [--json]`
 - `sidecar status [--json]`
 - `sidecar preferences show [--json]`
 - `sidecar ui [--no-open] [--port <port>] [--install-only] [--project <path>] [--reinstall]`

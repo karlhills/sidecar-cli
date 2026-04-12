@@ -23,7 +23,7 @@ export function getCapabilitiesManifest(version: string) {
         description: 'Initialize Sidecar in the current directory',
         json_output: true,
         arguments: [],
-        options: ['--force', '--name <project-name>', '--json'],
+        options: ['--force', '--name <project-name>', '--instructions-template <name>', '--instructions-file <path>', '--json'],
       },
       {
         name: 'status',
