@@ -81,6 +81,18 @@ function respondSuccess(command: string, asJson: boolean, data: unknown, lines: 
   }
 }
 
+function renderInitBanner(): string {
+  return [
+    '  [■]─[▪]',
+    '  ███████╗██╗██████╗ ███████╗ ██████╗ █████╗ ██████╗',
+    '  ██╔════╝██║██╔══██╗██╔════╝██╔════╝██╔══██╗██╔══██╗',
+    '  ███████╗██║██║  ██║█████╗  ██║     ███████║██████╔╝',
+    '  ╚════██║██║██║  ██║██╔══╝  ██║     ██╔══██║██╔══██╗',
+    '  ███████║██║██████╔╝███████╗╚██████╗██║  ██║██║  ██║',
+    '  ╚══════╝╚═╝╚═════╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝',
+  ].join('\n');
+}
+
 function summaryWasRefreshedRecently(db: DatabaseSync, projectId: number): boolean {
   return Boolean(
     db
@@ -444,18 +456,13 @@ program
 
       const shouldShowBanner = !opts.json && !bannerDisabled();
       if (shouldShowBanner) {
-        console.log(renderBanner());
+        console.log(renderInitBanner());
         console.log('');
       }
       respondSuccess(command, Boolean(opts.json), data, [
         `Initialized Sidecar for project: ${projectName}`,
-        'Sidecar provides local project memory for decisions, work logs, tasks, and summaries.',
-        'Created:',
-        ...data.filesCreated.map((f) => `- ${f}`),
+        'Documentation: https://usesidecar.dev/',
         ...(resolvedInstructions ? ['', `Loaded instructions.md from ${resolvedInstructions.sourceLabel}`] : []),
-        '',
-        'Next step:',
-        'sidecar context',
       ]);
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);

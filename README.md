@@ -6,6 +6,8 @@ project memory for your work
 
 Sidecar is a local-first, CLI-first project memory and recording tool for human developers and AI coding agents.
 
+Documentation website: [usesidecar.dev](https://usesidecar.dev/)
+
 ## Why Sidecar exists
 
 - Keep project memory structured and local.
