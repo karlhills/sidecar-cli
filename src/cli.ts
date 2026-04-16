@@ -464,6 +464,7 @@ program
         'Documentation: https://usesidecar.dev/',
         ...(resolvedInstructions ? ['', `Loaded instructions.md from ${resolvedInstructions.sourceLabel}`] : []),
       ]);
+      maybePrintUpdateNotice();
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }
@@ -1089,12 +1090,17 @@ prompt
           runner_type: compiled.runner_type,
           agent_role: compiled.agent_role,
           prompt_path: compiled.prompt_path,
+          prompt_optimization: compiled.prompt_optimization,
           preview: opts.preview ? compiled.prompt_markdown : null,
         },
         [
           `Compiled prompt for ${compiled.task_id}.`,
           `Run: ${compiled.run_id}`,
           `Path: ${compiled.prompt_path}`,
+          `Prompt estimate: ${compiled.prompt_optimization.estimated_tokens_before} -> ${compiled.prompt_optimization.estimated_tokens_after} tokens (target ${compiled.prompt_optimization.budget_target})`,
+          ...(compiled.prompt_optimization.trimmed_sections.length > 0
+            ? [`Trimmed: ${compiled.prompt_optimization.trimmed_sections.join(', ')}`]
+            : []),
           ...(opts.preview ? ['', compiled.prompt_markdown] : []),
         ]
       );
@@ -1479,7 +1485,6 @@ if (process.argv.length === 2) {
     console.log('');
   }
   program.outputHelp();
-  maybePrintUpdateNotice();
   process.exit(0);
 }
 
@@ -1499,4 +1504,3 @@ if (
 }
 
 program.parse(process.argv);
-maybePrintUpdateNotice();

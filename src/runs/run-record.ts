@@ -31,6 +31,10 @@ export const runRecordSchema = z
     reviewed_at: z.string().datetime({ offset: true }).nullable().default(null),
     reviewed_by: z.string().default(''),
     review_note: z.string().default(''),
+    prompt_tokens_estimated_before: z.number().int().nonnegative().default(0),
+    prompt_tokens_estimated_after: z.number().int().nonnegative().default(0),
+    prompt_budget_target: z.number().int().nonnegative().default(0),
+    prompt_trimmed_sections: z.array(z.string()).default([]),
   })
   .strict();
 
@@ -53,6 +57,10 @@ export const runRecordCreateInputSchema = runRecordSchema
     reviewed_at: true,
     reviewed_by: true,
     review_note: true,
+    prompt_tokens_estimated_before: true,
+    prompt_tokens_estimated_after: true,
+    prompt_budget_target: true,
+    prompt_trimmed_sections: true,
   });
 
 export const runRecordUpdateInputSchema = z
@@ -72,6 +80,10 @@ export const runRecordUpdateInputSchema = z
     reviewed_at: z.string().datetime({ offset: true }).nullable().optional(),
     reviewed_by: z.string().optional(),
     review_note: z.string().optional(),
+    prompt_tokens_estimated_before: z.number().int().nonnegative().optional(),
+    prompt_tokens_estimated_after: z.number().int().nonnegative().optional(),
+    prompt_budget_target: z.number().int().nonnegative().optional(),
+    prompt_trimmed_sections: z.array(z.string()).optional(),
   })
   .strict();
 
@@ -105,6 +117,10 @@ export function createRunRecord(runId: string, input: RunRecordCreateInput): Run
     reviewed_at: input.reviewed_at ?? null,
     reviewed_by: input.reviewed_by ?? '',
     review_note: input.review_note ?? '',
+    prompt_tokens_estimated_before: input.prompt_tokens_estimated_before ?? 0,
+    prompt_tokens_estimated_after: input.prompt_tokens_estimated_after ?? 0,
+    prompt_budget_target: input.prompt_budget_target ?? 0,
+    prompt_trimmed_sections: input.prompt_trimmed_sections ?? [],
   };
 
   return runRecordSchema.parse(normalized);

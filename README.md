@@ -179,6 +179,29 @@ Artifacts:
 - `sidecar artifact add <path> [--kind file|doc|screenshot|other] [--note <text>] [--json]`
 - `sidecar artifact list [--json]`
 
+## Automatic prompt token budgeting
+
+When Sidecar compiles task prompts (`sidecar prompt compile` and run execution flows), it automatically applies a token budget to reduce context size without degrading execution quality.
+
+Current behavior:
+
+- Keeps required sections intact (task, objective, constraints, validation, definition of done).
+- Deduplicates repeated list items.
+- Trims only optional high-volume sections when needed (for example: in-scope lists, linked notes/decisions, long file lists).
+- Adds compact overflow lines such as `+ N more ... (see task packet for full list)`.
+
+Current defaults:
+
+- Target budget: ~1200 estimated tokens
+- Safety ceiling: ~1500 estimated tokens
+
+Prompt optimization data is included in compile output and stored on run records:
+
+- `prompt_tokens_estimated_before`
+- `prompt_tokens_estimated_after`
+- `prompt_budget_target`
+- `prompt_trimmed_sections`
+
 ## Example workflow
 
 ```bash

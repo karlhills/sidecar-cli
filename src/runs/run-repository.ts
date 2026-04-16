@@ -65,6 +65,7 @@ export class RunRecordRepository {
       validation_results: parsedPatch.validation_results ?? existing.validation_results,
       blockers: parsedPatch.blockers ?? existing.blockers,
       follow_ups: parsedPatch.follow_ups ?? existing.follow_ups,
+      prompt_trimmed_sections: parsedPatch.prompt_trimmed_sections ?? existing.prompt_trimmed_sections,
     };
     const validated = runRecordSchema.parse(merged);
     const filePath = runFilePath(this.runsPath, runId);

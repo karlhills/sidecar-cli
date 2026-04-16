@@ -18,6 +18,13 @@ export interface CompileTaskPromptResult {
   agent_role: string;
   prompt_path: string;
   prompt_markdown: string;
+  prompt_optimization: {
+    estimated_tokens_before: number;
+    estimated_tokens_after: number;
+    budget_target: number;
+    budget_max: number;
+    trimmed_sections: string[];
+  };
 }
 
 export function compileTaskPrompt(input: CompileTaskPromptInput): CompileTaskPromptResult {
@@ -32,7 +39,7 @@ export function compileTaskPrompt(input: CompileTaskPromptInput): CompileTaskPro
     worktree: task.tracking.worktree,
   });
 
-  const promptMarkdown = compilePromptMarkdown({
+  const compiledPrompt = compilePromptMarkdown({
     task,
     run: created.run,
     runner: input.runner,
@@ -40,11 +47,15 @@ export function compileTaskPrompt(input: CompileTaskPromptInput): CompileTaskPro
     linkedContext: input.linkedContext,
   });
 
-  const promptPath = saveCompiledPrompt(input.rootPath, created.run.run_id, promptMarkdown);
+  const promptPath = saveCompiledPrompt(input.rootPath, created.run.run_id, compiledPrompt.markdown);
   updateRunRecordEntry(input.rootPath, created.run.run_id, {
     status: 'queued',
     prompt_path: promptPath,
-    summary: `Compiled prompt for task ${task.task_id}`,
+    prompt_tokens_estimated_before: compiledPrompt.metadata.estimated_tokens_before,
+    prompt_tokens_estimated_after: compiledPrompt.metadata.estimated_tokens_after,
+    prompt_budget_target: compiledPrompt.metadata.budget_target,
+    prompt_trimmed_sections: compiledPrompt.metadata.trimmed_sections,
+    summary: `Compiled prompt for task ${task.task_id} (${compiledPrompt.metadata.estimated_tokens_before} -> ${compiledPrompt.metadata.estimated_tokens_after} est. tokens)`,
   });
 
   return {
@@ -53,6 +64,7 @@ export function compileTaskPrompt(input: CompileTaskPromptInput): CompileTaskPro
     runner_type: input.runner,
     agent_role: input.agentRole,
     prompt_path: promptPath,
-    prompt_markdown: promptMarkdown,
+    prompt_markdown: compiledPrompt.markdown,
+    prompt_optimization: compiledPrompt.metadata,
   };
 }
