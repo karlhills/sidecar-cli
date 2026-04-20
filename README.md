@@ -79,6 +79,18 @@ Run locally in dev mode:
 npm run dev -- --help
 ```
 
+## Release channels
+
+Sidecar ships features through `beta` → `rc` → `stable` as version bumps — there are no per-feature channel flags. Install `@beta` to try new features early; install default (stable) for the latest promoted release.
+
+| Channel | Current version | Notes |
+| --- | --- | --- |
+| stable (`latest`) | `0.1.4` | Promoted releases. Homebrew tracks this channel. |
+| rc | _none newer than stable_ | Release candidates published only when preparing a stable cut. |
+| beta | `0.1.5-beta.2` | Dual-runner pipelines, run replay, ambient capture via Claude Code hooks, typed validation + auto-approve, freestanding prompt specs, `sidecar demo`. |
+
+Per-version release notes live at [github.com/karlhills/sidecar-cli/releases](https://github.com/karlhills/sidecar-cli/releases).
+
 ## Quick start
 
 1. Initialize in a project directory:
