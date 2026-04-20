@@ -63,6 +63,7 @@ export class RunRecordRepository {
       changed_files: parsedPatch.changed_files ?? existing.changed_files,
       commands_run: parsedPatch.commands_run ?? existing.commands_run,
       validation_results: parsedPatch.validation_results ?? existing.validation_results,
+      validation: parsedPatch.validation ?? existing.validation,
       blockers: parsedPatch.blockers ?? existing.blockers,
       follow_ups: parsedPatch.follow_ups ?? existing.follow_ups,
       prompt_trimmed_sections: parsedPatch.prompt_trimmed_sections ?? existing.prompt_trimmed_sections,

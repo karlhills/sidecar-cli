@@ -7,12 +7,14 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <a class="skip-link" href="#content">Skip to main content</a>
     <header class="topbar">
       <div>
         <div class="mark">[■]─[▪] <span>sidecar</span></div>
         <div class="tagline">project memory for your work</div>
       </div>
       <div class="topbar-actions">
+        <button id="theme-toggle" class="button secondary icon-btn" type="button" aria-label="Toggle light/dark mode" title="Toggle light/dark mode">🌙</button>
         <button id="open-note-modal" class="button secondary" type="button">Add Note</button>
         <button id="open-task-modal" class="button secondary" type="button">Add Task</button>
         <button id="open-decision-modal" class="button secondary" type="button">Add Decision</button>
@@ -21,13 +23,14 @@
 
     <main class="layout">
       <aside class="nav">
-        <button data-view="mission" class="nav-btn active">Mission Control</button>
+        <button data-view="triage" class="nav-btn active">Triage</button>
+        <button data-view="mission" class="nav-btn">Mission Control</button>
         <button data-view="overview" class="nav-btn">Overview</button>
         <button data-view="timeline" class="nav-btn">Timeline</button>
         <button data-view="preferences" class="nav-btn">Preferences</button>
       </aside>
 
-      <section id="content" class="content">
+      <section id="content" class="content" tabindex="-1">
         <div class="loading">Loading Sidecar project data...</div>
       </section>
     </main>

@@ -1,41 +1,19 @@
 import type { RunnerAdapter, RunnerExecuteInput, RunnerExecutionResult, RunnerPrepareInput } from './runner-adapter.js';
+import { buildPreparedCommand, runSpawn } from './runner-exec.js';
 
 export class ClaudeRunnerAdapter implements RunnerAdapter {
   readonly runner = 'claude' as const;
 
   prepare(input: RunnerPrepareInput) {
-    const args = ['run', '--prompt-file', input.promptPath, '--role', input.agentRole];
-    return {
+    return buildPreparedCommand(input, 'claude', {
       command: 'claude',
-      args,
-      shellLine: `claude ${args.join(' ')}`,
-    };
+      buildArgs: (prompt) => ['-p', prompt, '--permission-mode', 'acceptEdits'],
+      shellLine: (_prompt, promptPath) => `claude -p "<prompt from ${promptPath}>"`,
+    });
   }
 
-  execute(input: RunnerExecuteInput): RunnerExecutionResult {
-    if (input.dryRun) {
-      return {
-        ok: true,
-        executed: false,
-        exitCode: 0,
-        summary: 'Dry run: prepared Claude command only.',
-        commandsRun: [input.prepared.shellLine],
-        validationResults: ['dry-run'],
-        blockers: [],
-        followUps: [],
-      };
-    }
-
-    return {
-      ok: true,
-      executed: false,
-      exitCode: 0,
-      summary: 'Prepared Claude command. Live execution is placeholder behavior in v1.',
-      commandsRun: [input.prepared.shellLine],
-      validationResults: ['runner execute placeholder'],
-      blockers: [],
-      followUps: ['Integrate real Claude command execution in runner adapter.'],
-    };
+  async execute(input: RunnerExecuteInput): Promise<RunnerExecutionResult> {
+    return runSpawn(input, 'claude', 'Claude');
   }
 
   collectResult(result: RunnerExecutionResult): RunnerExecutionResult {

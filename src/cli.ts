@@ -12,6 +12,8 @@ import { SidecarError } from './lib/errors.js';
 import { GLOBAL_INSTRUCTIONS_DIR, resolveInstructionsSource } from './lib/instructions.js';
 import { jsonFailure, jsonSuccess, printJsonEnvelope } from './lib/output.js';
 import { bannerDisabled, renderBanner } from './lib/banner.js';
+import { c } from './lib/color.js';
+import { renderTable } from './lib/table.js';
 import { getUpdateNotice } from './lib/update-check.js';
 import { ensureUiInstalled, launchUiServer } from './lib/ui.js';
 import { requireInitialized } from './db/client.js';
@@ -22,6 +24,11 @@ import { getCapabilitiesManifest } from './services/capabilities-service.js';
 import { addArtifact, listArtifacts } from './services/artifact-service.js';
 import { addDecision, addNote, addWorklog, getActiveSessionId, listRecentEvents } from './services/event-service.js';
 import { currentSession, endSession, startSession, verifySessionHygiene } from './services/session-service.js';
+import { HOOK_EVENTS, handleHookEvent, hookEventSchema, hookPayloadSchema } from './services/hook-service.js';
+import { loadPromptSpec } from './prompts/prompt-spec.js';
+import { compileSections, type TrimPolicy } from './prompts/sections.js';
+import { loadPromptPreferences } from './runners/config.js';
+import { renderClaudeCodeHooksJson } from './templates/hooks.js';
 import { eventIngestSchema, ingestEvent } from './services/event-ingest-service.js';
 import { buildExportJson, buildExportJsonlEvents, writeOutputFile } from './services/export-service.js';
 import { createTaskPacketRecord, getTaskPacket, listTaskPackets } from './tasks/task-service.js';
@@ -29,8 +36,8 @@ import { taskPacketPrioritySchema, taskPacketStatusSchema, taskPacketTypeSchema 
 import { getRunRecord, listRunRecords, listRunRecordsForTask } from './runs/run-service.js';
 import { runStatusSchema, runnerTypeSchema } from './runs/run-record.js';
 import { compileTaskPrompt } from './prompts/prompt-service.js';
-import { runTaskExecution } from './services/run-orchestrator-service.js';
-import { loadRunnerPreferences } from './runners/config.js';
+import { runPipelineExecution, runTaskExecution } from './services/run-orchestrator-service.js';
+import { loadRunnerPreferences, type AgentRole } from './runners/config.js';
 import { assignTask, queueReadyTasks } from './services/task-orchestration-service.js';
 import { buildReviewSummary, createFollowupTaskFromRun, reviewRun } from './services/run-review-service.js';
 import type { ActorType, ArtifactKind, SidecarConfig } from './types/models.js';
@@ -45,6 +52,16 @@ const agentRoleSchema = z.enum(['planner', 'builder-ui', 'builder-app', 'reviewe
 const exportFormatSchema = z.enum(['json', 'jsonl']);
 
 const NOT_INITIALIZED_MSG = 'Sidecar is not initialized in this directory or any parent directory';
+
+function formatStatus(value: string): string {
+  const v = value.toLowerCase();
+  if (v === 'ready' || v === 'draft') return c.cyan(value);
+  if (v === 'running' || v === 'queued') return c.yellow(value);
+  if (v === 'review') return c.magenta(value);
+  if (v === 'blocked') return c.red(value);
+  if (v === 'done' || v === 'merged' || v === 'approved') return c.green(value);
+  return value;
+}
 
 function fail(message: string): never {
   throw new SidecarError(message);
@@ -66,7 +83,7 @@ function handleCommandError(command: string, asJson: boolean, err: unknown): nev
   if (asJson) {
     printJsonEnvelope(jsonFailure(command, message));
   } else {
-    console.error(message);
+    console.error(`${c.red(c.bold('Error:'))} ${message}`);
   }
   process.exit(err instanceof SidecarError ? err.exitCode : 1);
 }
@@ -79,18 +96,6 @@ function respondSuccess(command: string, asJson: boolean, data: unknown, lines: 
   for (const line of lines) {
     console.log(line);
   }
-}
-
-function renderInitBanner(): string {
-  return [
-    '  [■]─[▪]',
-    '  ███████╗██╗██████╗ ███████╗ ██████╗ █████╗ ██████╗',
-    '  ██╔════╝██║██╔══██╗██╔════╝██╔════╝██╔══██╗██╔══██╗',
-    '  ███████╗██║██║  ██║█████╗  ██║     ███████║██████╔╝',
-    '  ╚════██║██║██║  ██║██╔══╝  ██║     ██╔══██║██╔══██╗',
-    '  ███████║██║██████╔╝███████╗╚██████╗██║  ██║██║  ██║',
-    '  ╚══════╝╚═╝╚═════╝ ╚══════╝ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝',
-  ].join('\n');
 }
 
 function summaryWasRefreshedRecently(db: DatabaseSync, projectId: number): boolean {
@@ -244,8 +249,62 @@ async function askWithDefault(
 }
 
 const program = new Command();
-program.name('sidecar').description('Local-first project memory and recording CLI').version(pkg.version);
+program
+  .name('sidecar')
+  .description(
+    'Local-first project memory and agent runner. Two namespaces:\n' +
+      '  sidecar log <memory-cmd>   (worklog, decision, note, recent, context, summary, session, event, artifact)\n' +
+      '  sidecar work <runner-cmd>  (task, run, prompt, hooks)\n' +
+      'The underlying verbs also work directly (e.g. `sidecar worklog record`), so existing scripts keep working.',
+  )
+  .version(pkg.version);
 program.option('--no-banner', 'Disable Sidecar banner output');
+
+const LOG_NAMESPACE_MEMBERS = [
+  'worklog',
+  'decision',
+  'note',
+  'recent',
+  'context',
+  'summary',
+  'session',
+  'event',
+  'artifact',
+] as const;
+const WORK_NAMESPACE_MEMBERS = ['task', 'run', 'prompt', 'hooks'] as const;
+
+// Approach C for the namespace split (memory vs runner): NEW top-level groups
+// `log` and `work` that proxy to the existing verbs by rewriting argv before
+// commander parses it. Existing verbs remain registered as-is, so scripts,
+// agents, and CLAUDE.md files in the wild keep working — the new namespaces
+// just add a clean positioning surface on top.
+function rewriteNamespaceArgv(argv: readonly string[]): string[] {
+  const out = [...argv];
+  if (out.length < 4) return out;
+  const ns = out[2];
+  const next = out[3];
+  if (ns === 'log' && (LOG_NAMESPACE_MEMBERS as readonly string[]).includes(next)) {
+    out.splice(2, 1);
+    return out;
+  }
+  if (ns === 'work' && (WORK_NAMESPACE_MEMBERS as readonly string[]).includes(next)) {
+    out.splice(2, 1);
+    return out;
+  }
+  return out;
+}
+
+function printNamespaceHelp(kind: 'log' | 'work'): void {
+  const members = kind === 'log' ? LOG_NAMESPACE_MEMBERS : WORK_NAMESPACE_MEMBERS;
+  const heading = kind === 'log' ? 'Memory commands' : 'Runner commands';
+  console.log(`${heading} — use ${c.cyan(`sidecar ${kind} <command> …`)} or the verb directly.`);
+  console.log('');
+  for (const m of members) {
+    console.log(`  ${c.cyan(`sidecar ${kind} ${m}`)}  →  ${c.dim(`sidecar ${m}`)}`);
+  }
+  console.log('');
+  console.log(`Run ${c.cyan(`sidecar <command> --help`)} for details on any verb.`);
+}
 
 function maybePrintUpdateNotice(): void {
   const jsonRequested = process.argv.includes('--json');
@@ -258,8 +317,8 @@ function maybePrintUpdateNotice(): void {
 
   const installTag = notice.channel === 'latest' ? 'latest' : notice.channel;
   console.log('');
-  console.log(`Update available: ${pkg.version} -> ${notice.latestVersion}`);
-  console.log(`Run: npm install -g sidecar-cli@${installTag}`);
+  console.log(c.yellow(`Update available: ${pkg.version} -> ${notice.latestVersion}`));
+  console.log(`Run: ${c.cyan(`npm install -g sidecar-cli@${installTag}`)}`);
 }
 
 program
@@ -289,14 +348,18 @@ program
       }
 
       console.log('Launching Sidecar UI');
-      console.log(`Project: ${projectRoot}`);
+
+      // Format info with aligned labels
+      const projectLabel = 'Project:'.padEnd(15);
+      const versionLabel = 'UI version:'.padEnd(15);
+      console.log(`  ${projectLabel}${projectRoot}`);
 
       const { installedVersion } = ensureUiInstalled({
         cliVersion: pkg.version,
         reinstall: Boolean(opts.reinstall),
-        onStatus: (line) => console.log(line),
+        onStatus: (line) => console.log(`  …  ${line}`),
       });
-      console.log(`UI version: ${installedVersion}`);
+      console.log(`  ${versionLabel}${installedVersion}`);
 
       if (opts.installOnly) {
         console.log('Install-only mode complete.');
@@ -308,9 +371,12 @@ program
         port,
         openBrowser: opts.open !== false,
       });
-      console.log(`URL: ${url}`);
+
+      console.log('');
+      const openLabel = 'Open:'.padEnd(15);
+      console.log(`  ${openLabel}${c.cyan(url)}`);
       if (opts.open === false) {
-        console.log('Browser auto-open disabled.');
+        console.log('  Browser auto-open disabled.');
       }
     } catch (err) {
       handleCommandError(command, false, err);
@@ -456,7 +522,7 @@ program
 
       const shouldShowBanner = !opts.json && !bannerDisabled();
       if (shouldShowBanner) {
-        console.log(renderInitBanner());
+        console.log(renderBanner('block'));
         console.log('');
       }
       respondSuccess(command, Boolean(opts.json), data, [
@@ -467,6 +533,174 @@ program
       maybePrintUpdateNotice();
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
+program
+  .command('demo')
+  .description('One-shot walkthrough in a temp dir: init → task → prompt → worklog → decision → summary')
+  .option('--cleanup', 'Delete the demo directory when done (default: keep so you can inspect the files)')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText(
+    'after',
+    '\nExamples:\n  $ sidecar demo\n  $ sidecar demo --cleanup\n  $ sidecar demo --json'
+  )
+  .action(async (opts) => {
+    const command = 'demo';
+    const os = await import('node:os');
+    const asJson = Boolean(opts.json);
+    const previousCwd = process.cwd();
+    const demoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sidecar-demo-'));
+    const log = asJson ? () => {} : (line = '') => console.log(line);
+    const step = (n: number, title: string) => log(`\n${c.bold(c.cyan(`[${n}] ${title}`))}`);
+    try {
+      process.chdir(demoRoot);
+
+      log(c.bold('Sidecar demo'));
+      log(c.dim(`Sandbox: ${demoRoot}`));
+      log(c.dim('Nothing below modifies your current project.'));
+
+      step(1, 'Initialize (.sidecar/, config, DB)');
+      const sidecar = getSidecarPaths(demoRoot);
+      fs.mkdirSync(sidecar.sidecarPath, { recursive: true });
+      fs.mkdirSync(sidecar.tasksPath, { recursive: true });
+      fs.mkdirSync(sidecar.runsPath, { recursive: true });
+      fs.mkdirSync(sidecar.promptsPath, { recursive: true });
+      const ts = nowIso();
+      const projectName = 'demo-project';
+      {
+        const db = new DatabaseSync(sidecar.dbPath);
+        initializeSchema(db);
+        db.prepare(`DELETE FROM projects`).run();
+        db.prepare(
+          `INSERT INTO projects (name, root_path, created_at, updated_at) VALUES (?, ?, ?, ?)`
+        ).run(projectName, demoRoot, ts, ts);
+        db.close();
+      }
+      const config: SidecarConfig = {
+        schemaVersion: 1,
+        project: { name: projectName, rootPath: demoRoot, createdAt: ts },
+        defaults: { summary: { recentLimit: 10 } },
+        settings: {},
+      };
+      fs.writeFileSync(sidecar.configPath, stringifyJson(config));
+      fs.writeFileSync(
+        sidecar.preferencesPath,
+        stringifyJson({
+          summary: { format: 'markdown', recentLimit: 8 },
+          output: { humanTime: true },
+          runner: {
+            defaultRunner: 'codex',
+            preferredRunners: ['codex', 'claude'],
+            defaultAgentRole: 'builder-app',
+          },
+        })
+      );
+      fs.writeFileSync(sidecar.agentsPath, renderAgentsMarkdown(projectName));
+      log(c.green('  ✓ ') + 'Sidecar initialized');
+      log(c.dim(`     try: sidecar status`));
+
+      step(2, 'Create a sample task packet');
+      const created = createTaskPacketRecord(demoRoot, {
+        title: 'Add welcome banner',
+        summary: 'Show a friendly greeting on first launch so new users know the tool is working.',
+        goal: 'Render a configurable banner at the top of the home page.',
+        type: 'feature',
+        status: 'ready',
+        priority: 'medium',
+        scope_in_scope: ['Render banner component', 'Wire to /home route'],
+        scope_out_of_scope: ['Dismissal persistence'],
+        files_to_read: ['src/pages/home.tsx'],
+        definition_of_done: ['Banner visible on load', 'No layout shift'],
+        validation_commands: ['typecheck@30s:tsc --noEmit', 'test@2m:npm test'],
+      });
+      log(c.green('  ✓ ') + `${created.task.task_id} — ${created.task.title}`);
+      log(c.dim(`     packet: ${path.relative(demoRoot, created.path)}`));
+      log(c.dim(`     try: sidecar task show ${created.task.task_id}`));
+
+      step(3, 'Compile a prompt (no runner spawn)');
+      const compiled = compileTaskPrompt({
+        rootPath: demoRoot,
+        taskId: created.task.task_id,
+        runner: 'codex',
+        agentRole: 'builder-app',
+      });
+      const promptPreview = compiled.prompt_markdown
+        .split('\n')
+        .slice(0, 10)
+        .map((l) => '     ' + l)
+        .join('\n');
+      log(c.green('  ✓ ') + `${compiled.run_id} compiled to ${path.relative(demoRoot, compiled.prompt_path)}`);
+      log(
+        c.dim(
+          `     tokens: ${compiled.prompt_optimization.estimated_tokens_before} → ${compiled.prompt_optimization.estimated_tokens_after} (budget ${compiled.prompt_optimization.budget_target})`
+        )
+      );
+      log(c.dim('     preview:'));
+      log(c.dim(promptPreview));
+      log(c.dim(`     try: sidecar run-exec ${created.task.task_id} --dry-run`));
+
+      step(4, 'Record a worklog + decision');
+      const db = new DatabaseSync(sidecar.dbPath);
+      const row = db.prepare(`SELECT id FROM projects LIMIT 1`).get() as { id: number };
+      const projectId = row.id;
+      addWorklog(db, {
+        projectId,
+        goal: 'welcome banner',
+        done: 'Scaffolded banner component and wired the home route.',
+        files: 'src/pages/home.tsx,src/components/Banner.tsx',
+        by: 'agent',
+      });
+      addDecision(db, {
+        projectId,
+        title: 'Use inline SVG for the banner icon',
+        summary: 'Avoids an extra network request on first load; matches existing icon patterns.',
+        by: 'agent',
+      });
+      log(c.green('  ✓ ') + 'worklog + decision recorded');
+      log(c.dim('     try: sidecar worklog list  |  sidecar decision list'));
+
+      step(5, 'Refresh summary + show context');
+      const refreshed = refreshSummaryFile(db, demoRoot, projectId, 10);
+      const ctx = buildContext(db, { projectId, limit: 10 });
+      db.close();
+      log(c.green('  ✓ ') + `summary.md refreshed (${refreshed.generatedAt})`);
+      log(c.dim(`     path: ${path.relative(demoRoot, sidecar.summaryPath)}`));
+      log(
+        c.dim(
+          `     worklogs: ${ctx.recentWorklogs.length}, decisions: ${ctx.recentDecisions.length}, open tasks: ${ctx.openTasks.length}`
+        )
+      );
+      log(c.dim('     try: sidecar context --format markdown'));
+
+      log('');
+      log(c.bold('Done.'));
+      if (opts.cleanup) {
+        process.chdir(previousCwd);
+        fs.rmSync(demoRoot, { recursive: true, force: true });
+        log(c.dim('Sandbox cleaned up.'));
+      } else {
+        log(`Sandbox kept at ${c.cyan(demoRoot)} — poke around, then ${c.dim('rm -rf')} when done.`);
+      }
+
+      const data = {
+        demo_root: demoRoot,
+        task_id: created.task.task_id,
+        run_id: compiled.run_id,
+        prompt_path: compiled.prompt_path,
+        cleaned_up: Boolean(opts.cleanup),
+      };
+      if (asJson) {
+        process.chdir(previousCwd);
+        printJsonEnvelope(jsonSuccess(command, data));
+      }
+    } catch (err) {
+      try { process.chdir(previousCwd); } catch { /* ignore */ }
+      handleCommandError(command, asJson, err);
+    } finally {
+      if (process.cwd() !== previousCwd) {
+        try { process.chdir(previousCwd); } catch { /* ignore */ }
+      }
     }
   });
 
@@ -732,14 +966,27 @@ program
       db.close();
       if (opts.json) printJsonEnvelope(jsonSuccess(command, { events: rows }));
       else {
-        if ((rows as unknown[]).length === 0) {
+        const typed = rows as Array<{ id: number; type: string; title: string; summary: string; created_at: string }>;
+        if (typed.length === 0) {
           console.log('No events found.');
           return;
         }
-        for (const row of rows as Array<{ id: number; type: string; title: string; summary: string; created_at: string }>) {
-          console.log(`#${row.id} ${humanTime(row.created_at)} | ${row.type} | ${row.title}`);
-          console.log(`  ${row.summary}`);
-        }
+        renderTable(
+          [
+            { key: 'id', label: 'ID', align: 'right' },
+            { key: 'when', label: 'When' },
+            { key: 'type', label: 'Type' },
+            { key: 'title', label: 'Title', maxWidth: 40 },
+            { key: 'summary', label: 'Summary', maxWidth: 60 },
+          ],
+          typed.map((row) => ({
+            id: `#${row.id}`,
+            when: humanTime(row.created_at),
+            type: row.type,
+            title: row.title ?? '',
+            summary: row.summary ?? '',
+          }))
+        );
       }
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
@@ -874,7 +1121,10 @@ task
   .option('--files-avoid <paths>', 'Comma-separated files to avoid')
   .option('--constraint-tech <items>', 'Comma-separated technical constraints')
   .option('--constraint-design <items>', 'Comma-separated design constraints')
-  .option('--validate-cmds <commands>', 'Comma-separated validation commands')
+  .option(
+    '--validate-cmds <commands>',
+    'Comma-separated validation commands. Use "kind:command" to tag (typecheck|lint|test|build|custom), e.g. "typecheck:tsc --noEmit,test:npm test". Append "@30s" / "@2m" / "@1500ms" to the kind to override the timeout, e.g. "test@2m:npm test".',
+  )
   .option('--dod <items>', 'Comma-separated definition-of-done checks')
   .option('--branch <name>', 'Branch name')
   .option('--worktree <path>', 'Worktree path')
@@ -988,15 +1238,22 @@ task
         return;
       }
 
-      const idWidth = Math.max(6, ...rows.map((r) => r.task_id.length));
-      const statusWidth = Math.max(11, ...rows.map((r) => r.status.length));
-      const priorityWidth = Math.max(8, ...rows.map((r) => r.priority.length));
-      console.log(`${'TASK ID'.padEnd(idWidth)}  ${'STATUS'.padEnd(statusWidth)}  ${'PRIORITY'.padEnd(priorityWidth)}  TITLE`);
-      for (const row of rows) {
-        console.log(
-          `${row.task_id.padEnd(idWidth)}  ${row.status.padEnd(statusWidth)}  ${row.priority.padEnd(priorityWidth)}  ${row.title}`
-        );
-      }
+      const tableRows = rows.map((r) => ({
+        task_id: r.task_id,
+        status: r.status,
+        priority: r.priority,
+        title: r.title,
+      }));
+
+      renderTable(
+        [
+          { key: 'task_id', label: 'TASK ID', minWidth: 6 },
+          { key: 'status', label: 'STATUS', minWidth: 8, format: formatStatus },
+          { key: 'priority', label: 'PRIORITY', minWidth: 8 },
+          { key: 'title', label: 'TITLE', maxWidth: 60 },
+        ],
+        tableRows
+      );
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }
@@ -1054,25 +1311,142 @@ task
   });
 
 const prompt = program.command('prompt').description('Prompt compilation commands');
+
+function parseSectionPolicy(raw: string | undefined): Record<string, TrimPolicy> | undefined {
+  if (!raw) return undefined;
+  const out: Record<string, TrimPolicy> = {};
+  for (const pair of raw.split(',')) {
+    const [id, policy] = pair.split('=').map((s) => s.trim());
+    if (!id || !policy) continue;
+    if (policy !== 'keep' && policy !== 'trim-last' && policy !== 'drop') {
+      fail(`Invalid policy for ${id}: ${policy} (expected keep|trim-last|drop)`);
+    }
+    out[id] = policy;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function isSpecFileTarget(target: string): boolean {
+  const lower = target.toLowerCase();
+  if (lower.endsWith('.yaml') || lower.endsWith('.yml') || lower.endsWith('.json')) return true;
+  if (target.includes('/') || target.startsWith('.')) return true;
+  if (fs.existsSync(target)) return true;
+  return false;
+}
+
 prompt
-  .command('compile <task-id>')
-  .description('Compile a markdown execution brief from a task packet')
-  .requiredOption('--runner <runner>', 'codex|claude')
-  .requiredOption('--agent-role <role>', 'Agent role, for example builder')
+  .command('compile <task-or-file>')
+  .description('Compile a markdown execution brief from a task id OR a freestanding prompt spec file (.yaml|.yml|.json)')
+  .option('--runner <runner>', 'codex|claude (task-id mode only)')
+  .option('--agent-role <role>', 'Agent role, for example builder (task-id mode only)')
   .option('--preview', 'Print compiled prompt content after writing file')
+  .option('--budget <tokens>', 'Override target budget (spec-file mode)', (v) => Number.parseInt(v, 10))
+  .option('--budget-max <tokens>', 'Override ceiling budget (spec-file mode)', (v) => Number.parseInt(v, 10))
+  .option('--section-policy <id=policy,...>', 'Per-section policy overrides (keep|trim-last|drop), spec-file mode')
+  .option('--explain', 'Print a per-section trace of what got kept, trimmed, or dropped')
+  .option('-o, --out <path>', 'Write compiled markdown to this path (spec-file mode; default prints to stdout)')
+  .option('--format <format>', 'markdown|json (spec-file mode; default markdown)', 'markdown')
   .option('--json', 'Print machine-readable JSON output')
   .addHelpText(
     'after',
-    '\nExamples:\n  $ sidecar prompt compile T-001 --runner codex --agent-role builder\n  $ sidecar prompt compile T-001 --runner claude --agent-role builder --preview\n  $ sidecar prompt compile T-001 --runner codex --agent-role reviewer --json'
+    '\nExamples:\n' +
+      '  $ sidecar prompt compile T-001 --runner codex --agent-role builder\n' +
+      '  $ sidecar prompt compile T-001 --runner claude --agent-role builder --preview\n' +
+      '  $ sidecar prompt compile ./prompt.yaml\n' +
+      '  $ sidecar prompt compile prompt.yaml --budget 2000 --explain\n' +
+      '  $ sidecar prompt compile prompt.yaml --section-policy notes=drop,decisions=keep -o out.md\n' +
+      '\nSpec schema (YAML or JSON):\n' +
+      '  header: ["# Title", "..."]\n' +
+      '  sections:\n' +
+      '    - id: objective\n' +
+      '      title: Objective\n' +
+      '      content: "What to build"\n' +
+      '      required: true\n' +
+      '    - id: scope\n' +
+      '      title: In scope\n' +
+      '      list: ["...", "..."]\n' +
+      '      trim: { policy: trim-last, limit: 8, limit_strict: 3, overflow_label: "in-scope items" }\n' +
+      '  budget: { target: 1200, max: 1500 }\n',
   )
-  .action((taskIdText, opts) => {
+  .action((target: string, opts) => {
     const command = 'prompt compile';
     try {
+      const targetText = String(target).trim();
+      const usingSpec = isSpecFileTarget(targetText);
+
+      if (usingSpec) {
+        const rootPath = resolveProjectRoot();
+        const pref = loadPromptPreferences(rootPath);
+        const { spec, input } = loadPromptSpec(targetText);
+
+        const target_budget = Number.isFinite(opts.budget) ? Number(opts.budget) : spec.budget?.target ?? pref.budget_target;
+        const max_budget = Number.isFinite(opts.budgetMax)
+          ? Number(opts.budgetMax)
+          : spec.budget?.max ?? Math.max(target_budget, pref.budget_max);
+        const policyOverrides = {
+          ...(input.policy_overrides ?? {}),
+          ...(parseSectionPolicy(opts.sectionPolicy) ?? {}),
+        };
+
+        const result = compileSections({
+          ...input,
+          budget: { target: target_budget, max: max_budget },
+          ...(Object.keys(policyOverrides).length > 0 ? { policy_overrides: policyOverrides } : {}),
+        });
+
+        const format = String(opts.format ?? 'markdown').toLowerCase();
+        if (opts.out) {
+          fs.mkdirSync(path.dirname(path.resolve(String(opts.out))), { recursive: true });
+          fs.writeFileSync(path.resolve(String(opts.out)), result.markdown, 'utf8');
+        }
+
+        if (opts.json || format === 'json') {
+          printJsonEnvelope(
+            jsonSuccess(command, {
+              source: targetText,
+              out_path: opts.out ? path.resolve(String(opts.out)) : null,
+              markdown: result.markdown,
+              metadata: result.metadata,
+            }),
+          );
+          return;
+        }
+
+        if (!opts.out) {
+          process.stdout.write(result.markdown);
+        } else {
+          console.log(`Compiled ${targetText} -> ${path.resolve(String(opts.out))}`);
+          console.log(
+            `Estimate: ${result.metadata.estimated_tokens_before} -> ${result.metadata.estimated_tokens_after} tokens (target ${target_budget}, max ${max_budget})`,
+          );
+        }
+        if (opts.explain) {
+          console.error(''); // blank line before explain block when stdout carried markdown
+          console.error('--- explain ---');
+          for (const s of result.metadata.sections) {
+            const status = s.was_dropped ? 'dropped' : s.was_trimmed ? 'trimmed' : 'kept';
+            const counts = s.kind === 'list' ? ` ${s.kept_items ?? 0}/${s.total_items ?? 0}` : '';
+            console.error(
+              `  [${status}] ${s.id} (${s.kind}${counts}) — ~${s.estimated_tokens} tokens — policy=${s.policy_applied}`,
+            );
+          }
+          if (result.metadata.trimmed_sections.length > 0) {
+            console.error(`trimmed: ${result.metadata.trimmed_sections.join(', ')}`);
+          }
+          if (result.metadata.dropped_sections.length > 0) {
+            console.error(`dropped: ${result.metadata.dropped_sections.join(', ')}`);
+          }
+        }
+        return;
+      }
+
+      // Task-id mode (legacy path).
       const rootPath = resolveProjectRoot();
-      const taskId = taskIdText.trim().toUpperCase();
+      const taskId = targetText.toUpperCase();
+      if (!opts.runner) fail('--runner is required when compiling a task packet');
+      if (!opts.agentRole) fail('--agent-role is required when compiling a task packet');
       const runner = runnerTypeSchema.parse(opts.runner as string);
       const agentRole = String(opts.agentRole ?? '').trim();
-      if (!agentRole) fail('Agent role is required');
 
       const compiled = compileTaskPrompt({
         rootPath,
@@ -1112,26 +1486,56 @@ prompt
 program
   .command('run-exec <task-id>')
   .description('Internal command backing `sidecar run <task-id>`')
-  .option('--runner <runner>', 'codex|claude')
+  .option('--runner <runner>', 'codex|claude — comma-separated for a dual-runner pipeline (e.g. codex,claude)')
   .option('--agent-role <role>', 'planner|builder-ui|builder-app|reviewer|tester')
   .option('--dry-run', 'Prepare and compile only without executing external runner')
   .option('--json', 'Print machine-readable JSON output')
-  .action((taskIdText, opts) => {
+  .action(async (taskIdText, opts) => {
     const command = 'run';
     try {
       const rootPath = resolveProjectRoot();
       const defaults = loadRunnerPreferences(rootPath);
-      const selectedRunner = opts.runner ? runnerTypeSchema.parse(opts.runner as string) : defaults.default_runner;
+      const runnersRaw = typeof opts.runner === 'string' ? opts.runner : '';
+      const runners = runnersRaw
+        ? runnersRaw
+            .split(',')
+            .map((s: string) => s.trim())
+            .filter(Boolean)
+            .map((s: string) => runnerTypeSchema.parse(s))
+        : [defaults.default_runner];
       const selectedAgentRole = opts.agentRole
         ? agentRoleSchema.parse(opts.agentRole as string)
         : defaults.default_agent_role;
+      const taskId = String(taskIdText).trim().toUpperCase();
 
-      const result = runTaskExecution({
+      if (runners.length > 1) {
+        const pipeline = await runPipelineExecution({
+          rootPath,
+          taskId,
+          runners,
+          agentRole: selectedAgentRole,
+          dryRun: Boolean(opts.dryRun),
+          streamOutput: opts.json ? 'stderr' : 'stdout',
+        });
+        const lines: string[] = [
+          `Pipeline ${pipeline.pipeline_id} — ${pipeline.steps.length} runners for ${taskId}.`,
+        ];
+        pipeline.steps.forEach((r, i) => {
+          lines.push(
+            `  [${i + 1}/${pipeline.steps.length}] ${r.runner_type} (${r.agent_role}) → ${r.run_id} · ${r.status} · ${(r.duration_ms / 1000).toFixed(1)}s · changed ${r.changed_files.length}`,
+          );
+        });
+        respondSuccess(command, Boolean(opts.json), pipeline, lines);
+        return;
+      }
+
+      const result = await runTaskExecution({
         rootPath,
-        taskId: String(taskIdText).trim().toUpperCase(),
-        runner: selectedRunner,
+        taskId,
+        runner: runners[0],
         agentRole: selectedAgentRole,
         dryRun: Boolean(opts.dryRun),
+        streamOutput: opts.json ? 'stderr' : 'stdout',
       });
 
       respondSuccess(command, Boolean(opts.json), result, [
@@ -1141,6 +1545,9 @@ program
         `Command: ${result.shell_command}`,
         `Status: ${result.status}`,
         `Summary: ${result.summary}`,
+        `Changed files: ${result.changed_files.length}`,
+        `Duration: ${(result.duration_ms / 1000).toFixed(1)}s`,
+        `Log: ${result.log_path ?? 'n/a'}`,
       ]);
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
@@ -1152,7 +1559,7 @@ const run = program
   .description('Run task execution or inspect run records')
   .addHelpText(
     'after',
-    '\nExamples:\n  $ sidecar run T-001 --dry-run\n  $ sidecar run T-001 --runner claude --agent-role reviewer\n  $ sidecar run queue\n  $ sidecar run start-ready --dry-run\n  $ sidecar run list --task T-001\n  $ sidecar run show R-001'
+    '\nExamples:\n  $ sidecar run T-001 --dry-run\n  $ sidecar run T-001 --runner claude --agent-role reviewer\n  $ sidecar run replay R-010 --edit-prompt\n  $ sidecar run replay R-010 --runner claude --reason "second opinion"\n  $ sidecar run queue\n  $ sidecar run start-ready --dry-run\n  $ sidecar run list --task T-001\n  $ sidecar run show R-001'
   );
 
 run
@@ -1180,17 +1587,68 @@ run
   .option('--dry-run', 'Prepare and compile only without executing external runners')
   .option('--json', 'Print machine-readable JSON output')
   .addHelpText('after', '\nExamples:\n  $ sidecar run start-ready\n  $ sidecar run start-ready --dry-run --json')
-  .action((opts) => {
+  .action(async (opts) => {
     const command = 'run start-ready';
     try {
       const rootPath = resolveProjectRoot();
       const queueDecisions = queueReadyTasks(rootPath);
       const queuedTasks = listTaskPackets(rootPath).filter((task) => task.status === 'queued');
-      const results = queuedTasks.map((task) => runTaskExecution({ rootPath, taskId: task.task_id, dryRun: Boolean(opts.dryRun) }));
+      const results: Awaited<ReturnType<typeof runTaskExecution>>[] = [];
+      for (const task of queuedTasks) {
+        const result = await runTaskExecution({
+          rootPath,
+          taskId: task.task_id,
+          dryRun: Boolean(opts.dryRun),
+          streamOutput: opts.json ? 'stderr' : 'stdout',
+        });
+        results.push(result);
+      }
       respondSuccess(command, Boolean(opts.json), { queued: queueDecisions, results }, [
         `Queued in this pass: ${queueDecisions.filter((d) => d.queued).length}`,
         `Started: ${results.length}`,
         ...results.map((r) => `- ${r.task_id} -> ${r.run_id} (${r.status})`),
+      ]);
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
+run
+  .command('replay <run-id>')
+  .description('Replay an existing run as a new run on the same task')
+  .option('--runner <runner>', 'Override the runner for the replay (codex|claude)')
+  .option('--agent-role <role>', 'Override the agent role (planner|builder-ui|builder-app|reviewer|tester)')
+  .option('--reason <text>', 'Why you are replaying (stored on the new run)')
+  .option('--edit-prompt', 'Open the compiled prompt in $EDITOR before executing')
+  .option('--dry-run', 'Prepare and compile only without executing external runners')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText(
+    'after',
+    '\nExamples:\n  $ sidecar run replay R-010\n  $ sidecar run replay R-010 --runner claude --reason "second opinion"\n  $ sidecar run replay R-010 --edit-prompt\n  $ sidecar run replay R-010 --dry-run --json',
+  )
+  .action(async (runIdText, opts) => {
+    const command = 'run replay';
+    try {
+      const rootPath = resolveProjectRoot();
+      const parentRunId = String(runIdText).trim().toUpperCase();
+      const parent = getRunRecord(rootPath, parentRunId);
+      const runner = opts.runner ? runnerTypeSchema.parse(opts.runner) : parent.runner_type;
+      const agentRole = opts.agentRole ? agentRoleSchema.parse(opts.agentRole) : parent.agent_role;
+      const result = await runTaskExecution({
+        rootPath,
+        taskId: parent.task_id,
+        runner,
+        agentRole: agentRole as AgentRole,
+        dryRun: Boolean(opts.dryRun),
+        streamOutput: opts.json ? 'stderr' : 'stdout',
+        parentRunId,
+        replayReason: opts.reason ? String(opts.reason) : undefined,
+        editPrompt: Boolean(opts.editPrompt),
+      });
+      respondSuccess(command, Boolean(opts.json), result, [
+        `Replayed ${parentRunId} as ${result.run_id} (${result.status}).`,
+        `Runner: ${result.runner_type} · Role: ${result.agent_role}`,
+        ...(result.summary ? [result.summary] : []),
       ]);
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
@@ -1276,15 +1734,22 @@ run
         return;
       }
 
-      const idWidth = Math.max(6, ...rows.map((r) => r.run_id.length));
-      const taskWidth = Math.max(7, ...rows.map((r) => r.task_id.length));
-      const statusWidth = Math.max(10, ...rows.map((r) => r.status.length));
-      console.log(`${'RUN ID'.padEnd(idWidth)}  ${'TASK ID'.padEnd(taskWidth)}  ${'STATUS'.padEnd(statusWidth)}  STARTED`);
-      for (const row of rows) {
-        console.log(
-          `${row.run_id.padEnd(idWidth)}  ${row.task_id.padEnd(taskWidth)}  ${row.status.padEnd(statusWidth)}  ${humanTime(row.started_at)}`
-        );
-      }
+      const tableRows = rows.map((r) => ({
+        run_id: r.run_id,
+        task_id: r.task_id,
+        status: r.status,
+        started: humanTime(r.started_at),
+      }));
+
+      renderTable(
+        [
+          { key: 'run_id', label: 'RUN ID', minWidth: 6 },
+          { key: 'task_id', label: 'TASK ID', minWidth: 7 },
+          { key: 'status', label: 'STATUS', minWidth: 8, format: formatStatus },
+          { key: 'started', label: 'STARTED', minWidth: 16 },
+        ],
+        tableRows
+      );
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }
@@ -1326,11 +1791,101 @@ run
         respondSuccess(command, true, { run: runRecord }, []);
         return;
       }
-      console.log(stringifyJson(runRecord));
+      printRunHuman(runRecord);
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }
   });
+
+function printRunHuman(run: {
+  run_id: string;
+  task_id: string;
+  runner_type: string;
+  agent_role: string;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  summary: string;
+  changed_files: string[];
+  validation: Array<{
+    kind: string;
+    command: string;
+    name?: string;
+    ok: boolean;
+    timed_out: boolean;
+    duration_ms: number;
+    exit_code: number;
+  }>;
+  validation_results: string[];
+  review_state: string;
+  reviewed_by: string;
+  review_note: string;
+  blockers: string[];
+  follow_ups: string[];
+  parent_run_id: string | null;
+  replay_reason: string;
+}): void {
+  console.log(`${c.bold(run.run_id)} — ${run.task_id} [${formatStatus(run.status)}]`);
+  console.log(`Runner: ${run.runner_type} · Role: ${run.agent_role}`);
+  console.log(`Started: ${humanTime(run.started_at)}${run.completed_at ? ` · Completed: ${humanTime(run.completed_at)}` : ''}`);
+  if (run.parent_run_id) {
+    const reason = run.replay_reason ? ` — ${run.replay_reason}` : '';
+    console.log(`Replay of: ${c.cyan(run.parent_run_id)}${c.dim(reason)}`);
+  }
+  if (run.summary) console.log(`Summary: ${run.summary}`);
+
+  // Show child replays if any (rooted lineage is rendered at the start of the tree).
+  try {
+    const rootPath = resolveProjectRoot();
+    const children = listRunRecordsForTask(rootPath, run.task_id).filter((r) => r.parent_run_id === run.run_id);
+    if (children.length > 0) {
+      console.log(`Replayed as: ${children.map((r) => c.cyan(r.run_id)).join(', ')}`);
+    }
+  } catch {
+    // ignore — lineage is a nice-to-have, not critical path
+  }
+
+  const isAuto = run.reviewed_by === 'sidecar:auto';
+  const reviewLine = isAuto
+    ? `Review: ${formatStatus(run.review_state)} ${c.dim('(auto-approved)')}`
+    : `Review: ${formatStatus(run.review_state)}${run.reviewed_by ? ` by ${run.reviewed_by}` : ''}`;
+  console.log(reviewLine);
+  if (run.review_note) console.log(`  Note: ${run.review_note}`);
+
+  if (run.validation.length > 0) {
+    console.log('');
+    console.log(c.bold('Validation:'));
+    for (const v of run.validation) {
+      const kindLabel = v.name ? `${v.kind}:${v.name}` : v.kind;
+      const badge = v.ok ? c.green('✓ ok') : v.timed_out ? c.red('⏱ timed out') : c.red(`✗ failed (exit ${v.exit_code})`);
+      const duration = `${(v.duration_ms / 1000).toFixed(1)}s`;
+      console.log(`  ${c.cyan(`[${kindLabel}]`)} ${badge}  ${c.dim(duration)}  ${v.command}`);
+    }
+  } else if (run.validation_results.length > 0) {
+    // Legacy pre-kind records — still show them.
+    console.log('');
+    console.log(c.bold('Validation (legacy):'));
+    for (const line of run.validation_results) console.log(`  ${line}`);
+  }
+
+  if (run.changed_files.length > 0) {
+    console.log('');
+    console.log(c.bold(`Changed files (${run.changed_files.length}):`));
+    for (const f of run.changed_files.slice(0, 20)) console.log(`  ${f}`);
+    if (run.changed_files.length > 20) console.log(c.dim(`  … ${run.changed_files.length - 20} more`));
+  }
+
+  if (run.blockers.length > 0) {
+    console.log('');
+    console.log(c.bold('Blockers:'));
+    for (const b of run.blockers) console.log(`  - ${b}`);
+  }
+  if (run.follow_ups.length > 0) {
+    console.log('');
+    console.log(c.bold('Follow-ups:'));
+    for (const f of run.follow_ups) console.log(`  - ${f}`);
+  }
+}
 
 const session = program.command('session').description('Session commands');
 session
@@ -1466,13 +2021,25 @@ artifact
       db.close();
       if (opts.json) printJsonEnvelope(jsonSuccess(command, { artifacts: rows }));
       else {
-        if ((rows as unknown[]).length === 0) {
+        const typed = rows as Array<{ id: number; path: string; kind: string; note: string | null; created_at: string }>;
+        if (typed.length === 0) {
           console.log('No artifacts found.');
           return;
         }
-        for (const row of rows as Array<{ id: number; path: string; kind: string; note: string | null; created_at: string }>) {
-          console.log(`#${row.id} ${row.kind} ${row.path}${row.note ? ` - ${row.note}` : ''}`);
-        }
+        renderTable(
+          [
+            { key: 'id', label: 'ID', align: 'right' },
+            { key: 'kind', label: 'Kind' },
+            { key: 'path', label: 'Path', maxWidth: 60 },
+            { key: 'note', label: 'Note', maxWidth: 40 },
+          ],
+          typed.map((row) => ({
+            id: `#${row.id}`,
+            kind: row.kind,
+            path: row.path,
+            note: row.note ?? '',
+          }))
+        );
       }
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
@@ -1488,6 +2055,120 @@ if (process.argv.length === 2) {
   process.exit(0);
 }
 
+const hooks = program.command('hooks').description('Hook integration helpers');
+hooks
+  .command('print')
+  .description('Print a Claude Code settings.json hooks block wiring ambient capture')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText(
+    'after',
+    '\nCopy the output into .claude/settings.json (project) or ~/.claude/settings.json (user). Claude Code merges hook arrays across scopes.',
+  )
+  .action((opts) => {
+    const command = 'hooks print';
+    try {
+      const json = renderClaudeCodeHooksJson();
+      if (opts.json) {
+        printJsonEnvelope(jsonSuccess(command, { settings_json: json }));
+      } else {
+        console.log(json);
+      }
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
+program
+  .command('hook <event>')
+  .description(`Ambient capture entry point for Claude Code / Codex hooks (event: ${HOOK_EVENTS.join('|')})`)
+  .option('--actor-name <name>', 'Override the session actor_name (default: claude-code[:session])')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText(
+    'after',
+    '\nReads an optional JSON payload from stdin. Exit code is always 0 so hooks never block the caller — internal errors go to stderr.\n' +
+      '\nExamples:\n' +
+      '  $ echo \'{"session_id":"abc"}\' | sidecar hook session-start\n' +
+      '  $ echo \'{"tool_name":"Edit","tool_input":{"file_path":"/abs/src/foo.ts"}}\' | sidecar hook file-edit\n' +
+      '  $ sidecar hook session-end',
+  )
+  .action(async (eventArg: string, opts) => {
+    const command = `hook ${eventArg}`;
+    const asJson = Boolean(opts.json);
+    try {
+      const event = hookEventSchema.parse(eventArg);
+      let payload: z.infer<typeof hookPayloadSchema> = {};
+      if (!process.stdin.isTTY) {
+        const raw = (await readStdinText()).trim();
+        if (raw.length > 0) {
+          try {
+            payload = hookPayloadSchema.parse(JSON.parse(raw));
+          } catch (parseErr) {
+            const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+            console.error(`sidecar hook: ignoring malformed payload (${msg})`);
+          }
+        }
+      }
+      const { db, projectId, rootPath } = requireInitialized();
+      const result = handleHookEvent({
+        db,
+        projectId,
+        projectRoot: rootPath,
+        event,
+        payload,
+        ...(opts.actorName ? { actorName: String(opts.actorName) } : {}),
+      });
+      db.close();
+      if (asJson) {
+        printJsonEnvelope(jsonSuccess(command, result));
+      }
+      process.exit(0);
+    } catch (err) {
+      // Hooks must never block the caller — log to stderr and exit 0.
+      const message = err instanceof Error ? err.message : String(err);
+      if (asJson) {
+        printJsonEnvelope(jsonSuccess(command, { ok: true, event: eventArg, action: 'skipped', detail: message }));
+      } else {
+        console.error(`sidecar hook: ${message}`);
+      }
+      process.exit(0);
+    }
+  });
+
+program
+  .command('log')
+  .description('Memory namespace (alias group) — see `sidecar log --help`')
+  .allowUnknownOption(true)
+  .allowExcessArguments(true)
+  .action(() => {
+    printNamespaceHelp('log');
+  })
+  .addHelpText(
+    'after',
+    `\nMembers:\n${LOG_NAMESPACE_MEMBERS.map((m) => `  sidecar log ${m}  →  sidecar ${m}`).join('\n')}\n`,
+  );
+
+program
+  .command('work')
+  .description('Runner namespace (alias group) — see `sidecar work --help`')
+  .allowUnknownOption(true)
+  .allowExcessArguments(true)
+  .action(() => {
+    printNamespaceHelp('work');
+  })
+  .addHelpText(
+    'after',
+    `\nMembers:\n${WORK_NAMESPACE_MEMBERS.map((m) => `  sidecar work ${m}  →  sidecar ${m}`).join('\n')}\n`,
+  );
+
+// Rewrite `sidecar log <member> …` and `sidecar work <member> …` before
+// commander sees argv, so the verb's existing subcommand tree handles the call
+// verbatim (options, help, JSON envelopes, everything).
+const rewrittenArgv = rewriteNamespaceArgv(process.argv);
+if (rewrittenArgv !== process.argv) {
+  process.argv.length = 0;
+  process.argv.push(...rewrittenArgv);
+}
+
 if (
   process.argv[2] === 'run' &&
   process.argv[3] &&
@@ -1498,7 +2179,8 @@ if (
   process.argv[3] !== 'start-ready' &&
   process.argv[3] !== 'approve' &&
   process.argv[3] !== 'block' &&
-  process.argv[3] !== 'summary'
+  process.argv[3] !== 'summary' &&
+  process.argv[3] !== 'replay'
 ) {
   process.argv.splice(2, 1, 'run-exec');
 }

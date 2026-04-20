@@ -6,7 +6,9 @@ import {
   type TaskPacketPriority,
   type TaskPacketStatus,
   type TaskPacketType,
+  type ValidationStepInput,
 } from './task-packet.js';
+import { normalizeValidationStep } from '../runs/capture.js';
 
 export interface CreateTaskPacketInput {
   title: string;
@@ -23,7 +25,7 @@ export interface CreateTaskPacketInput {
   files_to_avoid?: string[];
   technical_constraints?: string[];
   design_constraints?: string[];
-  validation_commands?: string[];
+  validation_commands?: Array<string | ValidationStepInput>;
   dependencies?: string[];
   tags?: string[];
   target_areas?: string[];
@@ -61,7 +63,9 @@ export function createTaskPacketRecord(rootPath: string, input: CreateTaskPacket
     },
     execution: {
       commands: {
-        validation: input.validation_commands ?? [],
+        validation: (input.validation_commands ?? [])
+          .map((v) => normalizeValidationStep(v))
+          .filter((v): v is ValidationStepInput => v !== null),
       },
     },
     dependencies: input.dependencies ?? [],

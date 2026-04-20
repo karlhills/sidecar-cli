@@ -23,12 +23,6 @@ Install globally (stable):
 npm install -g sidecar-cli
 ```
 
-Note on npm deprecation warnings:
-
-- You may see a transitive warning for `prebuild-install@7.1.3` during install.
-- This currently comes from `better-sqlite3` (Sidecar's SQLite dependency), not from Sidecar code directly.
-- Sidecar still installs/works normally; we will update when upstream dependency chain moves off it.
-
 Install beta:
 
 ```bash
@@ -64,7 +58,7 @@ brew upgrade sidecar
 
 Requirements:
 
-- Node.js 20+
+- Node.js 22+ (Sidecar uses the built-in `node:sqlite` module)
 - npm
 
 Install dependencies:
@@ -135,11 +129,34 @@ This creates:
 
 Use `--force` to overwrite Sidecar-managed files.
 
+## Two namespaces: `log` and `work`
+
+Sidecar is one CLI that does two jobs: capture local project memory, and run AI coding agents against that memory. Each job has a namespace:
+
+- **`sidecar log <cmd>`** — memory: `worklog`, `decision`, `note`, `recent`, `context`, `summary`, `session`, `event`, `artifact`
+- **`sidecar work <cmd>`** — runner: `task`, `run`, `prompt`, `hooks`
+
+The underlying verbs still work directly, so `sidecar worklog record ...` and `sidecar log worklog record ...` are equivalent. Pick the form that reads best in your workflow.
+
+```bash
+sidecar log worklog record --done "..." --files src/a.ts
+sidecar log decision record --title "..." --summary "..."
+sidecar log context --format markdown
+sidecar log summary refresh
+
+sidecar work task create --title "..."
+sidecar work run T-001
+sidecar work prompt compile ./prompt.yaml
+```
+
+Run `sidecar log --help` or `sidecar work --help` for the full listing.
+
 ## Core commands
 
 Global:
 
 - `sidecar init [--force] [--name <project-name>] [--instructions-template <name>] [--instructions-file <path>] [--json]`
+- `sidecar demo [--cleanup] [--json]`
 - `sidecar status [--json]`
 - `sidecar preferences show [--json]`
 - `sidecar ui [--no-open] [--port <port>] [--install-only] [--project <path>] [--reinstall]`
@@ -147,6 +164,15 @@ Global:
 - `sidecar event add ... [--json]`
 - `sidecar export [--format json|jsonl] [--output <path>]`
 - `sidecar help`
+
+Runner and prompts:
+
+- `sidecar run <task-id> [--runner codex|claude|codex,claude] [--agent-role <role>] [--dry-run] [--json]`
+- `sidecar run replay <run-id> [--runner <r>] [--agent-role <role>] [--reason <text>] [--edit-prompt] [--dry-run] [--json]`
+- `sidecar run list [--task <task-id>] [--json]` · `sidecar run show <run-id> [--json]`
+- `sidecar run queue [--json]` · `sidecar run start-ready [--dry-run] [--json]`
+- `sidecar prompt compile <task-or-file> [--runner <r>] [--agent-role <role>] [--budget <n>] [--section-policy ...] [--explain] [--format json] [-o <path>]`
+- `sidecar hooks print` · `sidecar hook <session-start|session-end|file-edit|user-prompt> [--actor-name <name>] [--json]`
 
 Context and summary:
 
@@ -179,6 +205,138 @@ Artifacts:
 - `sidecar artifact add <path> [--kind file|doc|screenshot|other] [--note <text>] [--json]`
 - `sidecar artifact list [--json]`
 
+## Validation kinds and auto-approve
+
+Task packets describe post-run validation commands under `execution.commands.validation`. Each entry is tagged with a **kind** so Sidecar can route the result intelligently, apply a sensible default timeout, and surface the outcome in the UI and CLI.
+
+### Kinds
+
+| Kind | Default timeout | Intended for |
+| --- | --- | --- |
+| `typecheck` | 3 min | `tsc --noEmit`, `mypy`, `pyright` |
+| `lint` | 3 min | `eslint`, `ruff`, `golangci-lint` |
+| `test` | 10 min | unit/integration suites |
+| `build` | 10 min | bundlers, compilers, image builds |
+| `custom` | 5 min | anything else (the legacy default) |
+
+### Authoring
+
+On the CLI, prefix a command with `kind:`. Entries without a prefix default to `custom`.
+
+```bash
+sidecar task create \
+  --title "Add import flow" \
+  --summary "..." --goal "..." \
+  --validate-cmds "typecheck:tsc --noEmit,lint:eslint .,test:npm test"
+```
+
+In a task packet JSON file, use the object form:
+
+```json
+"execution": {
+  "commands": {
+    "validation": [
+      { "kind": "typecheck", "command": "tsc --noEmit" },
+      { "kind": "test", "command": "npm test", "timeout_ms": 900000 },
+      "bash scripts/smoke.sh"
+    ]
+  }
+}
+```
+
+String entries are accepted for back-compat (promoted to `{ kind: "custom", command }` on load).
+
+### Auto-approve on all-green
+
+When every validation step passes for a run, Sidecar can auto-approve the run so you don't have to click through the review queue for a strictly-green outcome. It's opt-in:
+
+```json
+// .sidecar/preferences.json
+{ "review": { "autoApproveOnAllGreen": true } }
+```
+
+Behavior when enabled:
+
+- The run's `review_state` flips to `approved`, `reviewed_by` is set to `sidecar:auto`, and the review note records how many steps passed.
+- Runs with zero configured validation steps are **not** auto-approved — a runner-only success still requires a human click.
+- Any failing step blocks the run as today (task moves to `blocked`, blocker message includes the kind).
+
+## Dual-runner pipelines
+
+Pass a comma-separated list to `--runner` and Sidecar runs each runner sequentially on the same task, feeding the previous run's summary into the next runner's compiled prompt as linked context.
+
+```bash
+sidecar run T-001 --runner codex,claude
+sidecar run T-001 --runner codex,claude --agent-role builder-app --dry-run
+```
+
+Each step produces its own run record linked back to the first run in the pipeline via `parent_run_id`. The CLI prints a one-line summary per step (runner, agent role, run id, status, duration, changed file count), and the full pipeline envelope is available with `--json`. Use this to pair a planner/builder runner with a reviewer runner, or to compare runners head-to-head on the same task.
+
+## Replay a run
+
+When a run finishes (whether ok, blocked, or failed) you can kick off a fresh run with the **same task** and a link back to the original via `sidecar run replay`. It's the fastest way to try a different runner, re-run after fixing a blocker, or fork a green run into an experiment without losing the audit trail.
+
+```bash
+sidecar run replay R-001 --reason "retry with claude after codex blocker"
+sidecar run replay R-001 --runner claude --agent-role builder-app --edit-prompt
+sidecar run replay R-001 --reason "dry-run with new validation" --dry-run
+```
+
+Flags:
+
+- `--runner codex|claude` — override the parent's runner (defaults to parent's runner).
+- `--agent-role <role>` — override the parent's agent role.
+- `--reason "<text>"` — stored on the new run as `replay_reason`; surfaced in CLI and UI.
+- `--edit-prompt` — opens the compiled prompt in `$VISUAL`/`$EDITOR` before the runner starts so you can tweak it.
+- `--dry-run` — compile the prompt and create the run record without executing the runner.
+- `--json` — machine-readable envelope output.
+
+The new run record carries `parent_run_id: "R-001"` plus your `replay_reason`. `sidecar run show <id>` renders the lineage both ways:
+
+- The parent shows **Replayed as:** with each child run id.
+- Each child shows **Replay of:** with the parent id and reason.
+
+The UI's Run Detail panel mirrors this: `Replay of:` links back to the parent; `Replays:` lists every child with its status. Both are clickable for one-hop navigation through a lineage.
+
+## Ambient capture via Claude Code hooks
+
+Sidecar can capture an ongoing Claude Code session into worklog/session records **without any explicit `sidecar worklog record` calls**. Once you wire Claude Code's hook system to `sidecar hook <event>`, every session start, file edit, and session end flows into your project memory automatically.
+
+Print the ready-to-paste settings block:
+
+```bash
+sidecar hooks print
+```
+
+Paste the `hooks` object into `.claude/settings.json` (project) or `~/.claude/settings.json` (user). Claude Code merges hook arrays across scopes, so user-level and project-level hooks compose.
+
+The template wires four events:
+
+| Claude Code event  | Sidecar hook           | Effect                                                             |
+| ------------------ | ---------------------- | ------------------------------------------------------------------ |
+| `SessionStart`     | `sidecar hook session-start` | Opens a Sidecar session (`actor=agent`, name `claude-code:<sid>`). Idempotent. |
+| `SessionEnd`       | `sidecar hook session-end`   | Closes the active session. Safe to call when none is open.          |
+| `PostToolUse` (Edit\|Write\|MultiEdit\|NotebookEdit) | `sidecar hook file-edit`     | Records a worklog `"Edited <path> via <tool>"` and links the file as an artifact. Lazy-opens a session if none is active. |
+| `UserPromptSubmit` | `sidecar hook user-prompt`   | Records the first 200 chars of the prompt as a note.                |
+
+Each hook:
+
+- Reads its payload JSON from stdin (Claude Code supplies it automatically).
+- **Always exits 0** — hooks never block the caller, even on internal errors.
+- Accepts `--actor-name <name>` to override the default actor name.
+- Accepts `--json` to emit a structured envelope (useful when testing).
+
+Quick manual smoke test:
+
+```bash
+echo '{"session_id":"abc"}' | sidecar hook session-start
+echo '{"tool_name":"Edit","tool_input":{"file_path":"'"$PWD"'/README.md"}}' | sidecar hook file-edit
+sidecar hook session-end
+sidecar recent --type worklog --limit 3
+```
+
+Codex users can invoke the same CLI from any shell hook or wrapper script — the payload schema is permissive, so a minimal `{"tool_input":{"file_path":"..."}}` works.
+
 ## Automatic prompt token budgeting
 
 When Sidecar compiles task prompts (`sidecar prompt compile` and run execution flows), it automatically applies a token budget to reduce context size without degrading execution quality.
@@ -201,6 +359,61 @@ Prompt optimization data is included in compile output and stored on run records
 - `prompt_tokens_estimated_after`
 - `prompt_budget_target`
 - `prompt_trimmed_sections`
+
+## Freestanding prompt specs
+
+`sidecar prompt compile` also accepts a `.yaml`/`.yml`/`.json` spec file — no TaskPacket required. This lets you iterate on prompts directly, or compose them programmatically from another tool.
+
+```bash
+sidecar prompt compile ./my-prompt.yaml
+sidecar prompt compile ./my-prompt.yaml --explain
+sidecar prompt compile ./my-prompt.yaml --budget 1500 --budget-max 2000
+sidecar prompt compile ./my-prompt.yaml --section-policy notes=drop,examples=trim-last
+sidecar prompt compile ./my-prompt.yaml -o out.md
+sidecar prompt compile ./my-prompt.yaml --format json
+```
+
+Spec schema:
+
+```yaml
+header:
+  - "# My Prompt"
+  - "Optional preamble rendered verbatim."
+
+sections:
+  - id: objective           # optional — auto-slugified from title if omitted
+    title: Objective
+    required: true          # forces policy=keep (never trimmed or dropped)
+    content: |              # text section: string or string[]
+      Describe the goal in one or two sentences.
+
+  - title: Notes
+    list:                   # list section
+      - First note
+      - Second note
+      - Third note
+    empty_placeholder: "- no notes yet"
+    trim:
+      policy: trim-last     # keep | trim-last | drop
+      limit: 2              # target-pass cap
+      limit_strict: 1       # safety-valve cap
+      overflow_label: notes # renders "+ N more notes (see task packet for full list)"
+
+budget:
+  target: 1200              # soft target
+  max: 1500                 # hard ceiling before strict pass
+
+policy_overrides:
+  notes: keep               # override per-section trim policies by id
+```
+
+Trim policies:
+
+- `keep` — never trim or drop (default for text sections and `required: true`)
+- `trim-last` — apply `limit` on the target pass, `limit_strict` on the strict pass (lists only)
+- `drop` — remove the whole section on the strict pass when still over budget
+
+`--explain` prints a per-section trace (policy applied, tokens, items kept/total) to stderr. `--format json` emits the standard envelope with `markdown` + full `metadata.sections` trace for programmatic use.
 
 ## Example workflow
 
@@ -312,22 +525,26 @@ sidecar ui --project ../other-repo
 sidecar ui --reinstall
 ```
 
-Initial UI screens:
+UI screens:
 
-- Overview: project info, active session, recent decisions/worklogs, open tasks, recent notes
-- Timeline: recent events in chronological order
-- Tasks: open and completed tasks
-- Decisions: decision records with summary and timestamps
-- Preferences: `.sidecar/preferences.json` and `.sidecar/summary.md`
+- **Mission Control**: open tasks, ready queue, runs in flight, pipelines, and run review queue — the main operational surface.
+- **Run Detail**: compiled prompt and runner log viewers, typed validation results (kind badges, exit code, duration, snippet), replay lineage (`Replay of:` / `Replays:`), and auto-approval markers.
+- **Overview**: project info, active session, recent decisions/worklogs, open tasks, recent notes, and counts.
+- **Timeline**: paginated event stream (load-more).
+- **Tasks** and **Decisions**: list views with summary and timestamps.
+- **Preferences**: edit `.sidecar/preferences.json` and view `.sidecar/summary.md`.
 
-UI write support (v1):
+UI write support:
 
-- Add notes from Overview
-- Add open tasks from Overview
-- Edit `.sidecar/preferences.json` from Preferences
+- Add notes and open tasks from Overview.
+- Trigger `run replay` with optional reason, runner override, and agent-role override from Run Detail.
+- Edit `.sidecar/preferences.json` from Preferences.
   - `output.humanTime` controls timestamp style in human-readable CLI output:
     - `true`: friendly local times (for example `3/18/2026, 11:51 AM`)
     - `false`: raw ISO-style timestamps
+  - `review.autoApproveOnAllGreen` — auto-approve runs when every validation step passes (see "Validation kinds and auto-approve").
+
+See [packages/ui/UI.md](packages/ui/UI.md) for the full UI reference (state model, views, modals, HTTP API, accessibility).
 
 ## JSON output
 

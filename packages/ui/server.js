@@ -223,8 +223,21 @@ function loadTaskDetail(taskId) {
 }
 
 function loadRunDetail(runId) {
-  const run = loadRuns().find((row) => row.run_id === runId);
-  return run ?? null;
+  const runs = loadRuns();
+  const run = runs.find((row) => row.run_id === runId);
+  if (!run) return null;
+  const children = runs
+    .filter((row) => row.parent_run_id === runId)
+    .map((row) => ({
+      run_id: row.run_id,
+      status: row.status,
+      runner_type: row.runner_type,
+      agent_role: row.agent_role,
+      started_at: row.started_at,
+      completed_at: row.completed_at,
+      replay_reason: row.replay_reason || '',
+    }));
+  return { ...run, children };
 }
 
 function resolveSidecarInvocation() {
@@ -282,6 +295,22 @@ function loadOverview() {
     .prepare(`SELECT id, title, summary, created_at FROM events WHERE project_id = ? AND type = 'note' ORDER BY created_at DESC LIMIT 8`)
     .all(projectId);
 
+  const countOpenTasks = db
+    .prepare(`SELECT COUNT(*) AS n FROM tasks WHERE project_id = ? AND status = 'open'`)
+    .get(projectId);
+  const countOpenTasksHigh = db
+    .prepare(`SELECT COUNT(*) AS n FROM tasks WHERE project_id = ? AND status = 'open' AND priority = 'high'`)
+    .get(projectId);
+  const countDecisions = db
+    .prepare(`SELECT COUNT(*) AS n FROM events WHERE project_id = ? AND type = 'decision'`)
+    .get(projectId);
+  const countWorklogs = db
+    .prepare(`SELECT COUNT(*) AS n FROM events WHERE project_id = ? AND type = 'worklog'`)
+    .get(projectId);
+  const countNotes = db
+    .prepare(`SELECT COUNT(*) AS n FROM events WHERE project_id = ? AND type = 'note'`)
+    .get(projectId);
+
   return {
     project,
     activeSession,
@@ -289,15 +318,25 @@ function loadOverview() {
     recentWorklogs: worklogs,
     openTasks,
     recentNotes: notes,
+    counts: {
+      openTasks: countOpenTasks?.n ?? 0,
+      openTasksHigh: countOpenTasksHigh?.n ?? 0,
+      decisionsTotal: countDecisions?.n ?? 0,
+      worklogsTotal: countWorklogs?.n ?? 0,
+      notesTotal: countNotes?.n ?? 0,
+    },
   };
 }
 
-function loadTimeline() {
+function loadTimeline(offset = 0, limit = 50) {
   const project = db.prepare('SELECT id FROM projects ORDER BY id LIMIT 1').get();
-  if (!project?.id) return [];
-  return db
-    .prepare(`SELECT id, type, title, summary, created_by, source, created_at FROM events WHERE project_id = ? ORDER BY created_at DESC LIMIT 100`)
-    .all(project.id);
+  if (!project?.id) return { events: [], hasMore: false, nextOffset: 0 };
+  const fetched = db
+    .prepare(`SELECT id, type, title, summary, created_by, source, created_at FROM events WHERE project_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+    .all(project.id, limit + 1, offset);
+  const hasMore = fetched.length > limit;
+  const events = hasMore ? fetched.slice(0, limit) : fetched;
+  return { events, hasMore, nextOffset: offset + events.length };
 }
 
 function loadTasks() {
@@ -555,6 +594,29 @@ const server = http.createServer((req, res) => {
       return;
     }
 
+    if (url.pathname === '/api/run/replay' && req.method === 'POST') {
+      readBody(req)
+        .then((raw) => {
+          const body = raw ? JSON.parse(raw) : {};
+          const runId = String(body.run_id ?? '').trim().toUpperCase();
+          const reason = String(body.reason ?? '');
+          const runner = body.runner ? String(body.runner) : '';
+          const agentRole = body.agent_role ? String(body.agent_role) : '';
+          if (!runId) return json(res, 400, { error: 'run_id is required' });
+          const payload = runSidecarJson([
+            'run',
+            'replay',
+            runId,
+            ...(reason ? ['--reason', reason] : []),
+            ...(runner ? ['--runner', runner] : []),
+            ...(agentRole ? ['--agent-role', agentRole] : []),
+          ]);
+          return json(res, 200, payload);
+        })
+        .catch((err) => json(res, 400, { error: err instanceof Error ? err.message : String(err) }));
+      return;
+    }
+
     if (url.pathname === '/api/run/block' && req.method === 'POST') {
       readBody(req)
         .then((raw) => {
@@ -597,7 +659,11 @@ const server = http.createServer((req, res) => {
     }
 
     if (req.method === 'GET' && url.pathname === '/api/overview') return json(res, 200, loadOverview());
-    if (req.method === 'GET' && url.pathname === '/api/timeline') return json(res, 200, loadTimeline());
+    if (req.method === 'GET' && url.pathname === '/api/timeline') {
+      const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0', 10) || 0);
+      const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get('limit') || '50', 10) || 50));
+      return json(res, 200, loadTimeline(offset, limit));
+    }
     if (req.method === 'GET' && url.pathname === '/api/tasks') return json(res, 200, loadTasks());
     if (req.method === 'GET' && url.pathname === '/api/decisions') return json(res, 200, loadDecisions());
     if (req.method === 'GET' && url.pathname === '/api/mission')
@@ -608,6 +674,43 @@ const server = http.createServer((req, res) => {
       return json(res, 200, loadTaskDetail(url.pathname.split('/').pop() || ''));
     if (req.method === 'GET' && url.pathname === '/api/runs')
       return json(res, 200, loadRuns());
+    {
+      const promptMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/prompt$/);
+      if (req.method === 'GET' && promptMatch) {
+        const runId = promptMatch[1];
+        const run = loadRunDetail(runId);
+        if (!run) return json(res, 404, { error: 'run not found' });
+        const promptPath = run.prompt_path || '';
+        if (!promptPath || !fs.existsSync(promptPath)) {
+          return json(res, 200, { run_id: runId, prompt_path: promptPath, content: null, truncated: false });
+        }
+        try {
+          const raw = fs.readFileSync(promptPath, 'utf8');
+          const truncated = raw.length > 4000;
+          const content = truncated ? raw.slice(0, 4000) : raw;
+          return json(res, 200, { run_id: runId, prompt_path: promptPath, content, truncated });
+        } catch {
+          return json(res, 200, { run_id: runId, prompt_path: promptPath, content: null, truncated: false });
+        }
+      }
+      const logMatch = url.pathname.match(/^\/api\/runs\/([^/]+)\/log$/);
+      if (req.method === 'GET' && logMatch) {
+        const runId = logMatch[1];
+        const logPath = path.join(sidecarDir, 'runs', 'logs', `${runId}.log`);
+        if (!fs.existsSync(logPath)) {
+          return json(res, 200, { run_id: runId, log_path: logPath, content: null, truncated: false, exists: false });
+        }
+        try {
+          const raw = fs.readFileSync(logPath, 'utf8');
+          const MAX = 16000;
+          const truncated = raw.length > MAX;
+          const content = truncated ? raw.slice(raw.length - MAX) : raw;
+          return json(res, 200, { run_id: runId, log_path: logPath, content, truncated, exists: true });
+        } catch (err) {
+          return json(res, 200, { run_id: runId, log_path: logPath, content: null, truncated: false, exists: false });
+        }
+      }
+    }
     if (req.method === 'GET' && url.pathname.startsWith('/api/runs/'))
       return json(res, 200, loadRunDetail(url.pathname.split('/').pop() || ''));
     if (req.method === 'GET' && url.pathname === '/api/run-summary') {
@@ -624,6 +727,15 @@ const server = http.createServer((req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/preferences') return json(res, 200, readPreferences());
     if (req.method === 'GET' && url.pathname === '/api/summary') return json(res, 200, { markdown: readSummary() });
+
+    if (url.pathname === '/api/summary/refresh' && req.method === 'POST') {
+      try {
+        runSidecar(['summary', 'refresh']);
+        return json(res, 200, { ok: true, markdown: readSummary() });
+      } catch (err) {
+        return json(res, 500, { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
 
     if (url.pathname.startsWith('/api/')) {
       return json(res, 404, { error: `Unknown API route: ${req.method} ${url.pathname}` });

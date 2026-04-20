@@ -10,6 +10,30 @@ export const taskPacketTypeSchema = z.enum(['feature', 'bug', 'chore', 'research
 export const taskAgentRoleSchema = z.enum(['planner', 'builder-ui', 'builder-app', 'reviewer', 'tester']);
 export const taskRunnerSchema = z.enum(['codex', 'claude']);
 
+export const validationKindSchema = z.enum(['typecheck', 'lint', 'test', 'build', 'custom']);
+export type ValidationKindValue = z.infer<typeof validationKindSchema>;
+
+// Accept string entries ("npm test") or object entries ({kind,command,...}). String entries
+// are promoted to { kind: 'custom', command }. This preserves the v1 packet shape while
+// giving new packets first-class typed validation steps.
+export const validationStepSchema = z.preprocess(
+  (raw) => {
+    if (typeof raw === 'string') {
+      return { kind: 'custom', command: raw };
+    }
+    return raw;
+  },
+  z
+    .object({
+      kind: validationKindSchema.default('custom'),
+      command: z.string().min(1, 'validation command is required'),
+      name: z.string().optional(),
+      timeout_ms: z.number().int().positive().optional(),
+    })
+    .strict(),
+);
+export type ValidationStepInput = z.infer<typeof validationStepSchema>;
+
 export const taskPacketSchema = z
   .object({
     version: z.string().default(TASK_PACKET_VERSION),
@@ -44,7 +68,7 @@ export const taskPacketSchema = z
     }),
     execution: z.object({
       commands: z.object({
-        validation: z.array(z.string()).default([]),
+        validation: z.array(validationStepSchema).default([]),
       }),
     }),
     dependencies: z.array(taskIdSchema).default([]),

@@ -1,3 +1,4 @@
+import { loadPromptPreferences } from '../runners/config.js';
 import { createRunRecordEntry, updateRunRecordEntry } from '../runs/run-service.js';
 import type { RunnerType } from '../runs/run-record.js';
 import { getTaskPacket } from '../tasks/task-service.js';
@@ -9,6 +10,11 @@ export interface CompileTaskPromptInput {
   runner: RunnerType;
   agentRole: string;
   linkedContext?: PromptLinkedContext;
+  parentRunId?: string | null;
+  replayReason?: string;
+  pipelineId?: string;
+  pipelineStep?: number;
+  pipelineTotal?: number;
 }
 
 export interface CompileTaskPromptResult {
@@ -37,6 +43,11 @@ export function compileTaskPrompt(input: CompileTaskPromptInput): CompileTaskPro
     status: 'preparing',
     branch: task.tracking.branch,
     worktree: task.tracking.worktree,
+    ...(input.parentRunId ? { parent_run_id: input.parentRunId } : {}),
+    ...(input.replayReason ? { replay_reason: input.replayReason } : {}),
+    ...(input.pipelineId ? { pipeline_id: input.pipelineId } : {}),
+    ...(input.pipelineStep ? { pipeline_step: input.pipelineStep } : {}),
+    ...(input.pipelineTotal ? { pipeline_total: input.pipelineTotal } : {}),
   });
 
   const compiledPrompt = compilePromptMarkdown({
@@ -45,6 +56,7 @@ export function compileTaskPrompt(input: CompileTaskPromptInput): CompileTaskPro
     runner: input.runner,
     agentRole: input.agentRole,
     linkedContext: input.linkedContext,
+    budget: loadPromptPreferences(input.rootPath),
   });
 
   const promptPath = saveCompiledPrompt(input.rootPath, created.run.run_id, compiledPrompt.markdown);

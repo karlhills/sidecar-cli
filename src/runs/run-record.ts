@@ -8,6 +8,24 @@ export const runStatusSchema = z.enum(['queued', 'preparing', 'running', 'review
 export const runnerTypeSchema = z.enum(['codex', 'claude']);
 export const runReviewStateSchema = z.enum(['pending', 'approved', 'needs_changes', 'blocked', 'merged']);
 
+export const runValidationKindSchema = z.enum(['typecheck', 'lint', 'test', 'build', 'custom']);
+export const runValidationEntrySchema = z
+  .object({
+    kind: runValidationKindSchema,
+    command: z.string(),
+    name: z.string().optional(),
+    exit_code: z.number().int(),
+    ok: z.boolean(),
+    timed_out: z.boolean().default(false),
+    duration_ms: z.number().int().nonnegative().default(0),
+    // Resolved timeout for this step (defaulting by kind when not set explicitly).
+    // Persisted so the UI can show "ran in 12s / limit 60s" without re-deriving.
+    timeout_ms: z.number().int().nonnegative().default(0),
+    output_snippet: z.string().default(''),
+  })
+  .strict();
+export type RunValidationEntry = z.infer<typeof runValidationEntrySchema>;
+
 export const runRecordSchema = z
   .object({
     version: z.string().default(RUN_RECORD_VERSION),
@@ -25,6 +43,7 @@ export const runRecordSchema = z
     changed_files: z.array(z.string()).default([]),
     commands_run: z.array(z.string()).default([]),
     validation_results: z.array(z.string()).default([]),
+    validation: z.array(runValidationEntrySchema).default([]),
     blockers: z.array(z.string()).default([]),
     follow_ups: z.array(z.string()).default([]),
     review_state: runReviewStateSchema.default('pending'),
@@ -35,6 +54,13 @@ export const runRecordSchema = z
     prompt_tokens_estimated_after: z.number().int().nonnegative().default(0),
     prompt_budget_target: z.number().int().nonnegative().default(0),
     prompt_trimmed_sections: z.array(z.string()).default([]),
+    parent_run_id: runIdSchema.nullable().default(null),
+    replay_reason: z.string().default(''),
+    // Dual-runner pipeline: siblings share a `pipeline_id` and carry 1-based
+    // step + total so downstream consumers can reconstruct the chain.
+    pipeline_id: z.string().nullable().default(null),
+    pipeline_step: z.number().int().positive().nullable().default(null),
+    pipeline_total: z.number().int().positive().nullable().default(null),
   })
   .strict();
 
@@ -51,6 +77,7 @@ export const runRecordCreateInputSchema = runRecordSchema
     changed_files: true,
     commands_run: true,
     validation_results: true,
+    validation: true,
     blockers: true,
     follow_ups: true,
     review_state: true,
@@ -61,6 +88,11 @@ export const runRecordCreateInputSchema = runRecordSchema
     prompt_tokens_estimated_after: true,
     prompt_budget_target: true,
     prompt_trimmed_sections: true,
+    parent_run_id: true,
+    replay_reason: true,
+    pipeline_id: true,
+    pipeline_step: true,
+    pipeline_total: true,
   });
 
 export const runRecordUpdateInputSchema = z
@@ -74,6 +106,7 @@ export const runRecordUpdateInputSchema = z
     changed_files: z.array(z.string()).optional(),
     commands_run: z.array(z.string()).optional(),
     validation_results: z.array(z.string()).optional(),
+    validation: z.array(runValidationEntrySchema).optional(),
     blockers: z.array(z.string()).optional(),
     follow_ups: z.array(z.string()).optional(),
     review_state: runReviewStateSchema.optional(),
@@ -84,6 +117,11 @@ export const runRecordUpdateInputSchema = z
     prompt_tokens_estimated_after: z.number().int().nonnegative().optional(),
     prompt_budget_target: z.number().int().nonnegative().optional(),
     prompt_trimmed_sections: z.array(z.string()).optional(),
+    parent_run_id: runIdSchema.nullable().optional(),
+    replay_reason: z.string().optional(),
+    pipeline_id: z.string().nullable().optional(),
+    pipeline_step: z.number().int().positive().nullable().optional(),
+    pipeline_total: z.number().int().positive().nullable().optional(),
   })
   .strict();
 
@@ -111,6 +149,7 @@ export function createRunRecord(runId: string, input: RunRecordCreateInput): Run
     changed_files: input.changed_files ?? [],
     commands_run: input.commands_run ?? [],
     validation_results: input.validation_results ?? [],
+    validation: input.validation ?? [],
     blockers: input.blockers ?? [],
     follow_ups: input.follow_ups ?? [],
     review_state: input.review_state ?? 'pending',
@@ -121,6 +160,11 @@ export function createRunRecord(runId: string, input: RunRecordCreateInput): Run
     prompt_tokens_estimated_after: input.prompt_tokens_estimated_after ?? 0,
     prompt_budget_target: input.prompt_budget_target ?? 0,
     prompt_trimmed_sections: input.prompt_trimmed_sections ?? [],
+    parent_run_id: input.parent_run_id ?? null,
+    replay_reason: input.replay_reason ?? '',
+    pipeline_id: input.pipeline_id ?? null,
+    pipeline_step: input.pipeline_step ?? null,
+    pipeline_total: input.pipeline_total ?? null,
   };
 
   return runRecordSchema.parse(normalized);

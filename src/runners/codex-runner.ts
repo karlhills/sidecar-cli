@@ -1,41 +1,19 @@
 import type { RunnerAdapter, RunnerExecuteInput, RunnerExecutionResult, RunnerPrepareInput } from './runner-adapter.js';
+import { buildPreparedCommand, runSpawn } from './runner-exec.js';
 
 export class CodexRunnerAdapter implements RunnerAdapter {
   readonly runner = 'codex' as const;
 
   prepare(input: RunnerPrepareInput) {
-    const args = ['run', '--prompt-file', input.promptPath, '--role', input.agentRole];
-    return {
+    return buildPreparedCommand(input, 'codex', {
       command: 'codex',
-      args,
-      shellLine: `codex ${args.join(' ')}`,
-    };
+      buildArgs: (prompt) => ['exec', prompt],
+      shellLine: (_prompt, promptPath) => `codex exec "<prompt from ${promptPath}>"`,
+    });
   }
 
-  execute(input: RunnerExecuteInput): RunnerExecutionResult {
-    if (input.dryRun) {
-      return {
-        ok: true,
-        executed: false,
-        exitCode: 0,
-        summary: 'Dry run: prepared Codex command only.',
-        commandsRun: [input.prepared.shellLine],
-        validationResults: ['dry-run'],
-        blockers: [],
-        followUps: [],
-      };
-    }
-
-    return {
-      ok: true,
-      executed: false,
-      exitCode: 0,
-      summary: 'Prepared Codex command. Live execution is placeholder behavior in v1.',
-      commandsRun: [input.prepared.shellLine],
-      validationResults: ['runner execute placeholder'],
-      blockers: [],
-      followUps: ['Integrate real Codex command execution in runner adapter.'],
-    };
+  async execute(input: RunnerExecuteInput): Promise<RunnerExecutionResult> {
+    return runSpawn(input, 'codex', 'Codex');
   }
 
   collectResult(result: RunnerExecutionResult): RunnerExecutionResult {

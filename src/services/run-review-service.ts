@@ -71,7 +71,7 @@ export function createFollowupTaskFromRun(
     files_to_avoid: sourceTask.implementation.files_to_avoid,
     technical_constraints: sourceTask.constraints.technical,
     design_constraints: sourceTask.constraints.design,
-    validation_commands: sourceTask.execution.commands.validation,
+    validation_commands: sourceTask.execution.commands.validation.map((v) => ({ ...v })),
     definition_of_done: [...sourceTask.definition_of_done, ...suggestions],
   });
 
