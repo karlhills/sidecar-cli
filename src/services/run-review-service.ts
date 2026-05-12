@@ -11,12 +11,12 @@ export interface ReviewRunResult {
   task_status: string;
 }
 
-function taskStatusForReview(state: RunReviewState): 'ready' | 'blocked' | 'done' | 'review' {
-  if (state === 'approved') return 'review';
-  if (state === 'needs_changes') return 'ready';
+function taskStatusForReview(state: RunReviewState): 'active' | 'blocked' | 'done' {
+  if (state === 'approved') return 'active';
+  if (state === 'needs_changes') return 'active';
   if (state === 'blocked') return 'blocked';
   if (state === 'merged') return 'done';
-  return 'review';
+  return 'active';
 }
 
 export function reviewRun(
@@ -56,23 +56,23 @@ export function createFollowupTaskFromRun(
   const run = getRunRecord(rootPath, runId);
   const sourceTask = getTaskPacket(rootPath, run.task_id);
   const suggestions = run.follow_ups.length > 0 ? run.follow_ups : ['Investigate run issues and apply required changes'];
+  const entryPoints =
+    sourceTask.entry_points.length > 0
+      ? sourceTask.entry_points.slice(0, 3)
+      : run.changed_files.slice(0, 3).length > 0
+        ? run.changed_files.slice(0, 3)
+        : ['src/cli.ts'];
 
   const created = createTaskPacketRecord(rootPath, {
     title: `Follow-up: ${sourceTask.title}`,
     summary: run.review_note || run.summary || 'Follow-up work from reviewed run',
-    goal: suggestions.join('; '),
-    type: sourceTask.type,
-    status: 'draft',
+    status: 'active',
     priority: sourceTask.priority,
-    dependencies: [sourceTask.task_id],
-    tags: Array.from(new Set([...sourceTask.tags, 'follow-up'])),
-    target_areas: sourceTask.target_areas,
-    files_to_read: sourceTask.implementation.files_to_read,
-    files_to_avoid: sourceTask.implementation.files_to_avoid,
-    technical_constraints: sourceTask.constraints.technical,
-    design_constraints: sourceTask.constraints.design,
-    validation_commands: sourceTask.execution.commands.validation.map((v) => ({ ...v })),
-    definition_of_done: [...sourceTask.definition_of_done, ...suggestions],
+    trigger_condition: `After ${sourceTask.task_id} is done and this follow-up is explicitly scheduled`,
+    trigger_depends_on: [sourceTask.task_id],
+    entry_points: entryPoints,
+    done_condition: suggestions.join('; '),
+    validation_command: sourceTask.validation_command,
   });
 
   return {

@@ -1,4 +1,4 @@
-import { nowIso } from '../lib/format.js';
+import { spawnSync } from 'node:child_process';
 import type { AgentRole } from '../runners/config.js';
 import type { RunnerType } from '../runs/run-record.js';
 import type { TaskPacket } from '../tasks/task-packet.js';
@@ -18,24 +18,16 @@ export interface QueueDecision {
 }
 
 function hasUiSignal(task: TaskPacket): boolean {
-  const joined = [
-    ...task.tags,
-    ...task.target_areas,
-    ...task.implementation.files_to_read,
-    ...task.implementation.files_to_avoid,
-  ]
-    .join(' ')
-    .toLowerCase();
+  const joined = [task.title, task.summary, ...task.entry_points].join(' ').toLowerCase();
   return /(ui|frontend|css|html|react|view|component)/.test(joined);
 }
 
 function pickRole(task: TaskPacket): { role: AgentRole; reason: string } {
-  if (task.type === 'research') return { role: 'planner', reason: 'task type is research' };
-  if (task.tags.some((t) => t.toLowerCase() === 'test') || task.target_areas.some((a) => /test/i.test(a))) {
-    return { role: 'tester', reason: 'tags/target_areas indicate testing' };
+  if (/test|qa|verification|validate/i.test(task.title) || /test|qa|verification|validate/i.test(task.summary)) {
+    return { role: 'tester', reason: 'testing signal in title/summary' };
   }
-  if (task.tags.some((t) => /review/i.test(t)) || task.type === 'bug') {
-    return { role: 'reviewer', reason: 'bug/review signal present' };
+  if (/review|audit|risk|regression/i.test(task.title) || /review|audit|risk|regression/i.test(task.summary)) {
+    return { role: 'reviewer', reason: 'review signal in title/summary' };
   }
   if (hasUiSignal(task)) return { role: 'builder-ui', reason: 'ui/frontend signal detected' };
   return { role: 'builder-app', reason: 'default app implementation path' };
@@ -47,8 +39,42 @@ function defaultRunnerForRole(role: AgentRole): RunnerType {
 }
 
 export function dependenciesMet(task: TaskPacket, tasksById: Map<string, TaskPacket>): { ok: boolean; missing: string[] } {
-  const missing = task.dependencies.filter((depId) => tasksById.get(depId)?.status !== 'done');
+  const deps = task.trigger.depends_on ?? [];
+  const missing = deps.filter((depId) => tasksById.get(depId)?.status !== 'done');
   return { ok: missing.length === 0, missing };
+}
+
+function triggerCommandSatisfied(rootPath: string, command: string): { ok: boolean; reason: string } {
+  const proc = spawnSync(command, {
+    cwd: rootPath,
+    shell: true,
+    stdio: 'pipe',
+    encoding: 'utf8',
+  });
+  const ok = proc.status === 0;
+  const stderr = (proc.stderr || '').trim();
+  const stdout = (proc.stdout || '').trim();
+  if (ok) return { ok: true, reason: `trigger check passed: ${command}` };
+  const details = stderr || stdout || `exit ${String(proc.status ?? '1')}`;
+  return { ok: false, reason: `trigger check failed: ${command} (${details})` };
+}
+
+export function evaluateTrigger(
+  rootPath: string,
+  task: TaskPacket,
+  tasksById: Map<string, TaskPacket>
+): { ok: boolean; reason: string } {
+  const dep = dependenciesMet(task, tasksById);
+  if (!dep.ok) return { ok: false, reason: `dependencies not done: ${dep.missing.join(', ')}` };
+
+  const checkCommand = task.trigger.check_command?.trim();
+  if (checkCommand) return triggerCommandSatisfied(rootPath, checkCommand);
+
+  if (task.trigger.depends_on.length > 0) {
+    return { ok: true, reason: 'dependency trigger satisfied' };
+  }
+
+  return { ok: false, reason: 'trigger requires user confirmation (no check command)' };
 }
 
 export function assignTask(
@@ -61,19 +87,6 @@ export function assignTask(
   const role = override?.role ?? auto.role;
   const runner = override?.runner ?? defaultRunnerForRole(role);
   const reason = override?.role || override?.runner ? 'manual override' : auto.reason;
-
-  const updated: TaskPacket = {
-    ...task,
-    tracking: {
-      ...task.tracking,
-      assigned_agent_role: role,
-      assigned_runner: runner,
-      assignment_reason: reason,
-      assigned_at: nowIso(),
-    },
-  };
-
-  saveTaskPacket(rootPath, updated);
   return { task_id: task.task_id, agent_role: role, runner, reason };
 }
 
@@ -83,41 +96,18 @@ export function queueReadyTasks(rootPath: string): QueueDecision[] {
   const decisions: QueueDecision[] = [];
 
   for (const task of tasks) {
-    if (task.status !== 'ready') continue;
+    if (task.status !== 'active') continue;
 
-    const dep = dependenciesMet(task, byId);
-    if (!dep.ok) {
-      saveTaskPacket(rootPath, { ...task, status: 'blocked' });
-      decisions.push({ task_id: task.task_id, queued: false, reason: `blocked by dependencies: ${dep.missing.join(', ')}` });
+    const trigger = evaluateTrigger(rootPath, task, byId);
+    if (!trigger.ok) {
+      if (task.trigger.depends_on.length > 0) {
+        saveTaskPacket(rootPath, { ...task, status: 'blocked' });
+      }
+      decisions.push({ task_id: task.task_id, queued: false, reason: trigger.reason });
       continue;
     }
 
-    const assignment: { role: AgentRole; runner: RunnerType } =
-      task.tracking.assigned_agent_role && task.tracking.assigned_runner
-        ? {
-            role: task.tracking.assigned_agent_role,
-            runner: task.tracking.assigned_runner,
-          }
-        : (() => {
-            const decided = assignTask(rootPath, task.task_id);
-            return { role: decided.agent_role, runner: decided.runner };
-          })();
-
-    const latest = getTaskPacket(rootPath, task.task_id);
-    saveTaskPacket(rootPath, {
-      ...latest,
-      status: 'queued',
-      tracking: {
-        ...latest.tracking,
-        assigned_agent_role: assignment.role,
-        assigned_runner: assignment.runner,
-      },
-    });
-    decisions.push({
-      task_id: task.task_id,
-      queued: true,
-      reason: `queued for ${assignment.role} via ${assignment.runner}`,
-    });
+    decisions.push({ task_id: task.task_id, queued: true, reason: trigger.reason });
   }
 
   return decisions;

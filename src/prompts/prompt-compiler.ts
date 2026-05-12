@@ -44,8 +44,8 @@ function packetInputForMode(adapterInput: PacketAdapterInput, mode: 'full' | 'tr
   const baseline = packetToCompileInput(adapterInput);
   if (mode === 'full') return baseline;
 
-  const relatedDecisions = adapterInput.linkedContext?.related_decisions ?? adapterInput.task.context.related_decisions;
-  const relatedNotes = adapterInput.linkedContext?.related_notes ?? adapterInput.task.context.related_notes;
+  const relatedDecisions = adapterInput.linkedContext?.related_decisions ?? [];
+  const relatedNotes = adapterInput.linkedContext?.related_notes ?? [];
   const linkedLines = linkedContextForMode(relatedDecisions, relatedNotes, mode);
 
   const sections: Section[] = baseline.sections.map((section) => {
@@ -64,8 +64,8 @@ function buildLegacyTrimmed(
 ): string[] {
   const out = new Set(listTrimmed);
   if (mode !== 'full') {
-    const decisions = adapterInput.linkedContext?.related_decisions ?? adapterInput.task.context.related_decisions;
-    const notes = adapterInput.linkedContext?.related_notes ?? adapterInput.task.context.related_notes;
+    const decisions = adapterInput.linkedContext?.related_decisions ?? [];
+    const notes = adapterInput.linkedContext?.related_notes ?? [];
     if (mode === 'trim') {
       if (decisions.length > 3) out.add('related_decisions');
       if (notes.length > 2) out.add('related_notes');

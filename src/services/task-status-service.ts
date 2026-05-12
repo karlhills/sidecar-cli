@@ -3,13 +3,9 @@ import type { TaskPacketStatus } from '../tasks/task-packet.js';
 import { getTaskPacket, saveTaskPacket } from '../tasks/task-service.js';
 
 const TASK_STATUS_TRANSITIONS: Record<TaskPacketStatus, TaskPacketStatus[]> = {
-  draft: ['ready', 'blocked', 'done'],
-  ready: ['draft', 'queued', 'blocked', 'done'],
-  queued: ['ready', 'running', 'blocked'],
-  running: ['ready', 'review', 'blocked'],
-  review: ['ready', 'blocked', 'done'],
-  blocked: ['ready', 'done'],
-  done: ['review'],
+  active: ['blocked', 'done'],
+  blocked: ['active', 'done'],
+  done: ['active'],
 };
 
 export interface TaskStatusTransitionResult {

@@ -35,14 +35,17 @@ Add a task:
 sidecar task create \
   --title "Add user profile settings page" \
   --summary "Create settings UI and persistence wiring" \
-  --goal "Users can update profile settings successfully" \
+  --trigger "After profile API contract is approved" \
+  --entry-points src/profile/routes.ts,src/profile/controller.ts \
+  --done-condition "Settings save and reload work end-to-end" \
+  --validate-cmd "npm test -- profile-settings" \
   --priority medium
 ```
 
-List draft tasks:
+List active tasks:
 
 ```bash
-sidecar task list --status draft
+sidecar task list --status active
 ```
 
 Mark a task done:
@@ -79,7 +82,10 @@ If follow-up work remains, add a task:
 sidecar task create \
   --title "Add integration test for failed settings save" \
   --summary "Cover failed-save UI path and retry" \
-  --goal "Protect failed-save behavior from regressions" \
+  --trigger "After settings retry UX ships" \
+  --entry-points tests/integration/profile-settings.test.ts \
+  --done-condition "Failed-save path has integration coverage" \
+  --validate-cmd "npm test -- profile-settings" \
   --priority medium
 ```
 
@@ -98,7 +104,7 @@ sidecar worklog record --done "<what changed>" --files <paths> --by agent
 # if behavior/design changed:
 sidecar decision record --title "<decision>" --summary "<why>" --by agent
 # if follow-up exists:
-sidecar task create --title "<follow-up>" --summary "<short summary>" --goal "<specific outcome>" --priority medium
+sidecar task create --title "<follow-up>" --summary "<short summary>" --trigger "<trigger>" --entry-points <path1,path2> --done-condition "<specific outcome>" --validate-cmd "<cmd>" --priority medium
 sidecar summary refresh
 ```
 

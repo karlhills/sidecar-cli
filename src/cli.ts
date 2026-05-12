@@ -32,7 +32,7 @@ import { renderClaudeCodeHooksJson } from './templates/hooks.js';
 import { eventIngestSchema, ingestEvent } from './services/event-ingest-service.js';
 import { buildExportJson, buildExportJsonlEvents, writeOutputFile } from './services/export-service.js';
 import { createTaskPacketRecord, getTaskPacket, listTaskPackets } from './tasks/task-service.js';
-import { taskPacketPrioritySchema, taskPacketStatusSchema, taskPacketTypeSchema } from './tasks/task-packet.js';
+import { taskPacketPrioritySchema, taskPacketStatusSchema } from './tasks/task-packet.js';
 import { getRunRecord, listRunRecords, listRunRecordsForTask } from './runs/run-service.js';
 import { runStatusSchema, runnerTypeSchema } from './runs/run-record.js';
 import { compileTaskPrompt } from './prompts/prompt-service.js';
@@ -47,7 +47,7 @@ const pkg = JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.ur
 
 const actorSchema = z.enum(['human', 'agent']);
 const artifactKindSchema = z.enum(['file', 'doc', 'screenshot', 'other']);
-const taskListStatusSchema = z.enum(['draft', 'ready', 'queued', 'running', 'review', 'blocked', 'done', 'all']);
+const taskListStatusSchema = z.enum(['active', 'blocked', 'done', 'all']);
 const runListStatusSchema = runStatusSchema.or(z.literal('all'));
 const agentRoleSchema = z.enum(['planner', 'builder-ui', 'builder-app', 'reviewer', 'tester']);
 const exportFormatSchema = z.enum(['json', 'jsonl']);
@@ -56,9 +56,7 @@ const NOT_INITIALIZED_MSG = 'Sidecar is not initialized in this directory or any
 
 function formatStatus(value: string): string {
   const v = value.toLowerCase();
-  if (v === 'ready' || v === 'draft') return c.cyan(value);
-  if (v === 'running' || v === 'queued') return c.yellow(value);
-  if (v === 'review') return c.magenta(value);
+  if (v === 'active') return c.cyan(value);
   if (v === 'blocked') return c.red(value);
   if (v === 'done' || v === 'merged' || v === 'approved') return c.green(value);
   return value;
@@ -605,15 +603,12 @@ program
       const created = createTaskPacketRecord(demoRoot, {
         title: 'Add welcome banner',
         summary: 'Show a friendly greeting on first launch so new users know the tool is working.',
-        goal: 'Render a configurable banner at the top of the home page.',
-        type: 'feature',
-        status: 'ready',
+        status: 'active',
         priority: 'medium',
-        scope_in_scope: ['Render banner component', 'Wire to /home route'],
-        scope_out_of_scope: ['Dismissal persistence'],
-        files_to_read: ['src/pages/home.tsx'],
-        definition_of_done: ['Banner visible on load', 'No layout shift'],
-        validation_commands: ['typecheck@30s:tsc --noEmit', 'test@2m:npm test'],
+        trigger_condition: 'PM approved onboarding polish for next release',
+        entry_points: ['src/pages/home.tsx', 'src/components/Banner.tsx'],
+        done_condition: 'Banner is visible on first launch with no layout shift.',
+        validation_command: 'npm run build',
       });
       log(c.green('  ✓ ') + `${created.task.task_id} — ${created.task.title}`);
       log(c.dim(`     packet: ${path.relative(demoRoot, created.path)}`));
@@ -1104,35 +1099,28 @@ worklog
 const task = program.command('task').description('Task commands');
 task
   .command('create')
-  .description('Create a structured task packet')
+  .description('Create an agent-ready queue task')
   .option('--title <title>', 'Task title')
-  .option('--type <type>', 'feature|bug|chore|research', 'chore')
-  .option('--status <status>', 'draft|ready|queued|running|review|blocked|done', 'draft')
+  .option('--status <status>', 'active|blocked|done', 'active')
   .option('--priority <priority>', 'low|medium|high', 'medium')
   .option('--summary <summary>', 'Task summary')
-  .option('--goal <goal>', 'Task goal')
-  .option('--dependencies <task-ids>', 'Comma-separated dependency task IDs')
-  .option('--tags <tags>', 'Comma-separated tags')
-  .option('--target-areas <areas>', 'Comma-separated target areas')
-  .option('--scope-in <items>', 'Comma-separated in-scope items')
-  .option('--scope-out <items>', 'Comma-separated out-of-scope items')
-  .option('--related-decisions <items>', 'Comma-separated related decision IDs/titles')
-  .option('--related-notes <items>', 'Comma-separated related notes')
-  .option('--files-read <paths>', 'Comma-separated files to read')
-  .option('--files-avoid <paths>', 'Comma-separated files to avoid')
-  .option('--constraint-tech <items>', 'Comma-separated technical constraints')
-  .option('--constraint-design <items>', 'Comma-separated design constraints')
-  .option(
-    '--validate-cmds <commands>',
-    'Comma-separated validation commands. Use "kind:command" to tag (typecheck|lint|test|build|custom), e.g. "typecheck:tsc --noEmit,test:npm test". Append "@30s" / "@2m" / "@1500ms" to the kind to override the timeout, e.g. "test@2m:npm test".',
-  )
-  .option('--dod <items>', 'Comma-separated definition-of-done checks')
-  .option('--branch <name>', 'Branch name')
-  .option('--worktree <path>', 'Worktree path')
+  .option('--trigger <condition>', 'Concrete trigger condition that makes this task ready')
+  .option('--trigger-check <command>', 'Command that returns 0 when the trigger is satisfied')
+  .option('--depends-on <task-ids>', 'Comma-separated dependency task IDs for trigger gating')
+  .option('--entry-points <paths>', 'Comma-separated 1-3 files to open first')
+  .option('--done-condition <text>', 'Observable condition that proves this task is done')
+  .option('--validate-cmd <command>', 'Command to validate the done condition')
   .option('--json', 'Print machine-readable JSON output')
   .addHelpText(
     'after',
-    '\nExamples:\n  $ sidecar task create\n  $ sidecar task create --title "Add import support" --summary "Support JSON import" --goal "Enable scripted import flow" --priority high\n  $ sidecar task create --title "Refactor parser" --files-read src/parser.ts,src/types.ts --dod "Tests pass,Docs updated"'
+    '\nExamples:\n' +
+      '  $ sidecar task create --title "Ship docs update" --summary "Update README hero"\n' +
+      '      --trigger "When >=6 hubs are published" --trigger-check "node scripts/check-hubs.mjs --min 6"\n' +
+      '      --entry-points README.md,POSITIONING.md --done-condition "README hero matches retrieval positioning"\n' +
+      '      --validate-cmd "npm run build"\n' +
+      '  $ sidecar task create --title "Follow-up patch" --summary "Apply merged run feedback"\n' +
+      '      --trigger "After T-012 is done" --depends-on T-012 --entry-points src/cli.ts\n' +
+      '      --done-condition "Regression no longer reproduces" --validate-cmd "npm test"'
   )
   .action(async (opts) => {
     const command = 'task create';
@@ -1140,48 +1128,48 @@ task
       const rootPath = resolveProjectRoot();
       let title = opts.title?.trim() ?? '';
       let summary = opts.summary?.trim() ?? '';
-      let goal = opts.goal?.trim() ?? '';
+      let triggerCondition = opts.trigger?.trim() ?? '';
+      let entryPointsRaw = opts.entryPoints?.trim() ?? '';
+      let doneCondition = opts.doneCondition?.trim() ?? '';
+      let validationCommand = opts.validateCmd?.trim() ?? '';
 
-      if (!title || !summary || !goal) {
+      if (!title || !summary || !triggerCondition || !entryPointsRaw || !doneCondition || !validationCommand) {
         if (!process.stdin.isTTY) {
-          fail('Missing required fields. Provide --title, --summary, and --goal when not running interactively.');
+          fail(
+            'Missing required fields. Provide --title, --summary, --trigger, --entry-points, --done-condition, and --validate-cmd when not running interactively.'
+          );
         }
         const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
         try {
           title = title || (await askWithDefault(rl, 'Title'));
           summary = summary || (await askWithDefault(rl, 'Summary', title));
-          goal = goal || (await askWithDefault(rl, 'Goal', `Complete: ${title}`));
+          triggerCondition = triggerCondition || (await askWithDefault(rl, 'Trigger condition'));
+          entryPointsRaw = entryPointsRaw || (await askWithDefault(rl, 'Entry points (comma-separated files)'));
+          doneCondition = doneCondition || (await askWithDefault(rl, 'Done condition', `Complete: ${title}`));
+          validationCommand = validationCommand || (await askWithDefault(rl, 'Validation command', 'npm run build'));
         } finally {
           rl.close();
         }
       }
 
-      const type = taskPacketTypeSchema.parse(opts.type);
       const status = taskPacketStatusSchema.parse(opts.status);
       const priority = taskPacketPrioritySchema.parse(opts.priority);
+      const entryPoints = parseCsvOption(entryPointsRaw);
+      if (entryPoints.length === 0 || entryPoints.length > 3) {
+        fail('Entry points must include between 1 and 3 paths');
+      }
 
       const created = createTaskPacketRecord(rootPath, {
         title,
         summary,
-        goal,
-        type,
         status,
         priority,
-        scope_in_scope: parseCsvOption(opts.scopeIn),
-        scope_out_of_scope: parseCsvOption(opts.scopeOut),
-        related_decisions: parseCsvOption(opts.relatedDecisions),
-        related_notes: parseCsvOption(opts.relatedNotes),
-        files_to_read: parseCsvOption(opts.filesRead),
-        files_to_avoid: parseCsvOption(opts.filesAvoid),
-        technical_constraints: parseCsvOption(opts.constraintTech),
-        design_constraints: parseCsvOption(opts.constraintDesign),
-        validation_commands: parseCsvOption(opts.validateCmds),
-        dependencies: parseCsvOption(opts.dependencies).map((v) => v.toUpperCase()),
-        tags: parseCsvOption(opts.tags),
-        target_areas: parseCsvOption(opts.targetAreas),
-        definition_of_done: parseCsvOption(opts.dod),
-        branch: opts.branch?.trim(),
-        worktree: opts.worktree?.trim(),
+        trigger_condition: triggerCondition,
+        trigger_check_command: opts.triggerCheck?.trim() || undefined,
+        trigger_depends_on: parseCsvOption(opts.dependsOn).map((v) => v.toUpperCase()),
+        entry_points: entryPoints,
+        done_condition: doneCondition,
+        validation_command: validationCommand,
       });
 
       respondSuccess(
@@ -1217,14 +1205,14 @@ task
 task
   .command('list')
   .description('List task packets')
-  .option('--status <status>', 'draft|ready|queued|running|review|blocked|done|all', 'all')
+  .option('--status <status>', 'active|blocked|done|all', 'all')
   .option('--json', 'Print machine-readable JSON output')
-  .addHelpText('after', '\nExamples:\n  $ sidecar task list\n  $ sidecar task list --status draft\n  $ sidecar task list --json')
+  .addHelpText('after', '\nExamples:\n  $ sidecar task list\n  $ sidecar task list --status active\n  $ sidecar task list --json')
   .action((opts) => {
     const command = 'task list';
     try {
       const status = taskListStatusSchema.parse(
-        opts.status as 'draft' | 'ready' | 'queued' | 'running' | 'review' | 'blocked' | 'done' | 'all'
+        opts.status as 'active' | 'blocked' | 'done' | 'all'
       );
       const tasks = listTaskPackets(resolveProjectRoot());
       const rows = status === 'all' ? tasks : tasks.filter((task) => task.status === status);
@@ -1292,14 +1280,14 @@ task
 task
   .command('set-status <task-id>')
   .description('Transition task packet status with validation and an audit note')
-  .requiredOption('--to <status>', 'draft|ready|queued|running|review|blocked|done')
+  .requiredOption('--to <status>', 'active|blocked|done')
   .requiredOption('--reason <text>', 'Why this manual transition is needed')
   .option('--by <actor>', 'human|agent', 'human')
   .option('--session <session-id>', 'Session id override')
   .option('--json', 'Print machine-readable JSON output')
   .addHelpText(
     'after',
-    '\nExamples:\n  $ sidecar task set-status T-001 --to ready --reason "Ready to queue"\n  $ sidecar task set-status T-001 --to done --reason "Administrative cleanup" --by agent --json'
+    '\nExamples:\n  $ sidecar task set-status T-001 --to active --reason "Trigger is now satisfied"\n  $ sidecar task set-status T-001 --to done --reason "Administrative cleanup" --by agent --json'
   )
   .action((taskIdText, opts) => {
     const command = 'task set-status';
@@ -1630,7 +1618,7 @@ const run = program
 
 run
   .command('queue')
-  .description('Queue all ready tasks with satisfied dependencies')
+  .description('Evaluate active tasks and mark dependency-blocked tasks')
   .option('--json', 'Print machine-readable JSON output')
   .addHelpText('after', '\nExamples:\n  $ sidecar run queue\n  $ sidecar run queue --json')
   .action((opts) => {
@@ -1639,7 +1627,7 @@ run
       const rootPath = resolveProjectRoot();
       const decisions = queueReadyTasks(rootPath);
       respondSuccess(command, Boolean(opts.json), { decisions }, [
-        `Processed ${decisions.length} ready task(s).`,
+        `Processed ${decisions.length} active task(s).`,
         ...decisions.map((d) => `- ${d.task_id}: ${d.reason}`),
       ]);
     } catch (err) {
@@ -1649,7 +1637,7 @@ run
 
 run
   .command('start-ready')
-  .description('Queue and start all runnable ready tasks')
+  .description('Evaluate active tasks and run the ones with satisfied triggers')
   .option('--dry-run', 'Prepare and compile only without executing external runners')
   .option('--json', 'Print machine-readable JSON output')
   .addHelpText('after', '\nExamples:\n  $ sidecar run start-ready\n  $ sidecar run start-ready --dry-run --json')
@@ -1658,9 +1646,13 @@ run
     try {
       const rootPath = resolveProjectRoot();
       const queueDecisions = queueReadyTasks(rootPath);
-      const queuedTasks = listTaskPackets(rootPath).filter((task) => task.status === 'queued');
+      const runnableTasks = queueDecisions
+        .filter((d) => d.queued)
+        .map((d) => d.task_id)
+        .map((taskId) => getTaskPacket(rootPath, taskId))
+        .filter((task) => task.status === 'active');
       const results: Awaited<ReturnType<typeof runTaskExecution>>[] = [];
-      for (const task of queuedTasks) {
+      for (const task of runnableTasks) {
         const result = await runTaskExecution({
           rootPath,
           taskId: task.task_id,

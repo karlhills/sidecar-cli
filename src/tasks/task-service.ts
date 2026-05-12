@@ -5,33 +5,19 @@ import {
   type TaskPacketInput,
   type TaskPacketPriority,
   type TaskPacketStatus,
-  type TaskPacketType,
-  type ValidationStepInput,
 } from './task-packet.js';
-import { normalizeValidationStep } from '../runs/capture.js';
 
 export interface CreateTaskPacketInput {
   title: string;
   summary: string;
-  goal: string;
-  type?: TaskPacketType;
-  status?: TaskPacketStatus;
   priority?: TaskPacketPriority;
-  scope_in_scope?: string[];
-  scope_out_of_scope?: string[];
-  related_decisions?: string[];
-  related_notes?: string[];
-  files_to_read?: string[];
-  files_to_avoid?: string[];
-  technical_constraints?: string[];
-  design_constraints?: string[];
-  validation_commands?: Array<string | ValidationStepInput>;
-  dependencies?: string[];
-  tags?: string[];
-  target_areas?: string[];
-  definition_of_done?: string[];
-  branch?: string;
-  worktree?: string;
+  status?: TaskPacketStatus;
+  trigger_condition: string;
+  trigger_check_command?: string;
+  trigger_depends_on?: string[];
+  entry_points: string[];
+  done_condition: string;
+  validation_command: string;
 }
 
 export function createTaskPacketRecord(rootPath: string, input: CreateTaskPacketInput): { task: TaskPacket; path: string } {
@@ -41,45 +27,16 @@ export function createTaskPacketRecord(rootPath: string, input: CreateTaskPacket
   const packetInput: TaskPacketInput = {
     title: input.title,
     summary: input.summary,
-    goal: input.goal,
-    type: input.type,
-    status: input.status,
     priority: input.priority,
-    scope: {
-      in_scope: input.scope_in_scope ?? [],
-      out_of_scope: input.scope_out_of_scope ?? [],
+    status: input.status,
+    trigger: {
+      condition: input.trigger_condition,
+      ...(input.trigger_check_command ? { check_command: input.trigger_check_command } : {}),
+      depends_on: (input.trigger_depends_on ?? []).map((v) => v.toUpperCase()),
     },
-    context: {
-      related_decisions: input.related_decisions ?? [],
-      related_notes: input.related_notes ?? [],
-    },
-    implementation: {
-      files_to_read: input.files_to_read ?? [],
-      files_to_avoid: input.files_to_avoid ?? [],
-    },
-    constraints: {
-      technical: input.technical_constraints ?? [],
-      design: input.design_constraints ?? [],
-    },
-    execution: {
-      commands: {
-        validation: (input.validation_commands ?? [])
-          .map((v) => normalizeValidationStep(v))
-          .filter((v): v is ValidationStepInput => v !== null),
-      },
-    },
-    dependencies: input.dependencies ?? [],
-    tags: input.tags ?? [],
-    target_areas: input.target_areas ?? [],
-    definition_of_done: input.definition_of_done ?? [],
-    tracking: {
-      branch: input.branch ?? '',
-      worktree: input.worktree ?? '',
-      assigned_agent_role: null,
-      assigned_runner: null,
-      assignment_reason: '',
-      assigned_at: null,
-    },
+    entry_points: input.entry_points,
+    done_condition: input.done_condition,
+    validation_command: input.validation_command,
   };
 
   const packet = createTaskPacket(taskId, packetInput);
@@ -90,13 +47,9 @@ export function createTaskPacketRecord(rootPath: string, input: CreateTaskPacket
 export function listTaskPackets(rootPath: string): TaskPacket[] {
   const repo = new TaskPacketRepository(rootPath);
   const order: Record<TaskPacketStatus, number> = {
-    draft: 0,
-    ready: 1,
-    queued: 2,
-    running: 3,
-    review: 4,
-    blocked: 5,
-    done: 6,
+    active: 0,
+    blocked: 1,
+    done: 2,
   };
 
   return repo
@@ -105,7 +58,7 @@ export function listTaskPackets(rootPath: string): TaskPacket[] {
     .sort((a, b) => {
       const byStatus = order[a.status] - order[b.status];
       if (byStatus !== 0) return byStatus;
-      return a.task_id.localeCompare(b.task_id, undefined, { numeric: true });
+      return a.created_at.localeCompare(b.created_at) || a.task_id.localeCompare(b.task_id, undefined, { numeric: true });
     });
 }
 

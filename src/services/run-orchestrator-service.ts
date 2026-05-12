@@ -104,10 +104,10 @@ export async function runTaskExecution(input: RunTaskInput): Promise<RunTaskResu
   const dryRun = Boolean(input.dryRun);
 
   const task = getTaskPacket(input.rootPath, input.taskId);
-  const runner = input.runner ?? task.tracking.assigned_runner ?? prefs.default_runner;
-  const agentRole = input.agentRole ?? task.tracking.assigned_agent_role ?? prefs.default_agent_role;
+  const runner = input.runner ?? prefs.default_runner;
+  const agentRole = input.agentRole ?? prefs.default_agent_role;
 
-  const worktree = (task.tracking.worktree ?? '').trim();
+  const worktree = '';
   let cwd: string;
   if (worktree.length > 0) {
     if (!fs.existsSync(worktree)) {
@@ -142,10 +142,10 @@ export async function runTaskExecution(input: RunTaskInput): Promise<RunTaskResu
   );
 
   const adapter = getRunnerAdapter(runner);
-  saveTaskPacket(input.rootPath, { ...task, status: 'running' });
+  saveTaskPacket(input.rootPath, { ...task, status: 'active' });
   updateRunRecordEntry(input.rootPath, compiled.run_id, {
     status: 'running',
-    branch: task.tracking.branch,
+    branch: '',
     worktree: cwd,
   });
 
@@ -181,12 +181,8 @@ export async function runTaskExecution(input: RunTaskInput): Promise<RunTaskResu
   }
 
   if (!dryRun && collected.executed && ok) {
-    const configured = task.execution?.commands?.validation ?? [];
-    const steps: ValidationStep[] = [];
-    for (const entry of configured) {
-      const normalized = normalizeValidationStep(entry as string | Partial<ValidationStep>);
-      if (normalized) steps.push(normalized);
-    }
+    const normalized = normalizeValidationStep(task.validation_command);
+    const steps: ValidationStep[] = normalized ? [normalized] : [];
     if (steps.length > 0) {
       validationAttempted = true;
       const results = await runValidationCommands(cwd, steps, logPath);
@@ -204,7 +200,7 @@ export async function runTaskExecution(input: RunTaskInput): Promise<RunTaskResu
   }
 
   const finishedStatus = ok ? 'completed' : 'failed';
-  const nextTaskStatus = ok ? 'review' : 'blocked';
+  const nextTaskStatus = ok ? 'done' : 'blocked';
 
   // Auto-approve on all-green is opt-in via preferences. We only auto-approve when at least
   // one validation step actually ran and every step passed — a runner-only success with no

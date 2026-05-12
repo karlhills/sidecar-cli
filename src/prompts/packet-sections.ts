@@ -1,7 +1,3 @@
-// Adapter from TaskPacket → CompileSectionsInput. Mirrors the legacy packet
-// layout exactly so `sidecar run <task-id>` produces byte-identical prompts
-// after the compiler refactor. Snapshot-guarded in `prompts.compat.test`.
-
 import { nowIso } from '../lib/format.js';
 import { PROMPT_PREFERENCE_DEFAULTS, type PromptPreferences } from '../runners/config.js';
 import type { RunnerType, RunRecord } from '../runs/run-record.js';
@@ -34,12 +30,35 @@ export interface PacketAdapterInput {
   budget?: PromptPreferences;
 }
 
+function textSection(id: string, title: string, content: string[]): TextSection {
+  return { id, title, kind: 'text', content, trim: 'keep' };
+}
+
+function listSection(
+  id: string,
+  title: string,
+  items: string[],
+  options?: {
+    empty_placeholder?: string;
+    trim?: ListSection['trim'];
+  },
+): ListSection {
+  return {
+    id,
+    title,
+    kind: 'list',
+    items,
+    ...(options?.empty_placeholder ? { empty_placeholder: options.empty_placeholder } : {}),
+    ...(options?.trim ? { trim: options.trim } : { trim: { policy: 'keep' } }),
+  };
+}
+
 function finalResponseFormat(runner: RunnerType): string[] {
   if (runner === 'codex') {
     return [
       '- Start with a one-line outcome summary.',
       '- List files changed with concise reasons.',
-      '- Include validation commands run and their results.',
+      '- Include validation command output.',
       '- Note risks, blockers, or follow-up tasks.',
     ];
   }
@@ -66,39 +85,6 @@ function runnerGuidance(runner: RunnerType): string[] {
   ];
 }
 
-function textSection(id: string, title: string, content: string[]): TextSection {
-  return { id, title, kind: 'text', content, trim: 'keep' };
-}
-
-function listSection(
-  id: string,
-  title: string,
-  items: string[],
-  options?: {
-    empty_placeholder?: string;
-    trim?: ListSection['trim'];
-  },
-): ListSection {
-  return {
-    id,
-    title,
-    kind: 'list',
-    items,
-    ...(options?.empty_placeholder ? { empty_placeholder: options.empty_placeholder } : {}),
-    ...(options?.trim ? { trim: options.trim } : { trim: { policy: 'keep' } }),
-  };
-}
-
-function validationLine(v: { kind: string; command: string; name?: string }): string {
-  const label = v.name ? `${v.kind}:${v.name}` : v.kind;
-  return v.kind === 'custom' ? v.command : `${label} — \`${v.command}\``;
-}
-
-// Linked context uses two sub-lists (decisions + notes) under one heading. The
-// legacy layout merged them so we render as a single `text` section whose
-// content is the pre-formatted bullet list, and trim by hand before handing it
-// to the core. That keeps byte-identical output without teaching the core
-// about multi-list sections.
 function renderLinkedContext(
   relatedDecisions: string[],
   relatedNotes: string[],
@@ -108,26 +94,24 @@ function renderLinkedContext(
   const decisions = mode === 'full'
     ? relatedDecisions
     : mode === 'trim'
-      ? sliceWithOverflow(relatedDecisions, 3, 'decisions')
-      : sliceWithOverflow(relatedDecisions, 1, 'decisions');
+      ? relatedDecisions.slice(0, 3)
+      : relatedDecisions.slice(0, 1);
   const notes = mode === 'full'
     ? relatedNotes
     : mode === 'trim'
-      ? sliceWithOverflow(relatedNotes, 2, 'notes')
-      : sliceWithOverflow(relatedNotes, 0, 'notes');
+      ? relatedNotes.slice(0, 2)
+      : [];
 
-  if (decisions.length === 0) lines.push('- no related decisions');
-  else for (const d of decisions) lines.push(`- ${d}`);
-  if (notes.length === 0) lines.push('- no related notes');
-  else for (const n of notes) lines.push(`- ${n}`);
+  if (decisions.length > 0) {
+    lines.push('Decisions:');
+    for (const d of decisions) lines.push(`- ${d}`);
+  }
+  if (notes.length > 0) {
+    lines.push('Notes:');
+    for (const n of notes) lines.push(`- ${n}`);
+  }
+  if (lines.length === 0) lines.push('- no linked context');
   return lines;
-}
-
-function sliceWithOverflow(items: string[], limit: number, label: string): string[] {
-  if (items.length <= limit) return items;
-  const kept = items.slice(0, limit);
-  kept.push(`+ ${items.length - limit} more ${label} (see task packet for full list)`);
-  return kept;
 }
 
 function renderPreviousRuns(runs: PreviousRunSummary[]): string[] {
@@ -142,26 +126,9 @@ function renderPreviousRuns(runs: PreviousRunSummary[]): string[] {
       const limited = prev.changed_files.slice(0, 12);
       lines.push(`- Changed files (${prev.changed_files.length}):`);
       for (const f of limited) lines.push(`  - ${f}`);
-      if (prev.changed_files.length > limited.length) {
-        lines.push(`  - + ${prev.changed_files.length - limited.length} more (see run record)`);
-      }
-    }
-    if (prev.log_tail) {
-      lines.push('- Log tail:');
-      lines.push('```');
-      for (const line of prev.log_tail.split('\n')) lines.push(line);
-      lines.push('```');
+      if (prev.changed_files.length > limited.length) lines.push(`  - + ${prev.changed_files.length - limited.length} more`);
     }
   });
-  return lines;
-}
-
-function renderConstraints(technical: string[], design: string[]): string[] {
-  const lines: string[] = [];
-  if (technical.length === 0) lines.push('- no technical constraints');
-  else for (const t of technical) lines.push(`- ${t}`);
-  if (design.length === 0) lines.push('- no design constraints');
-  else for (const d of design) lines.push(`- ${d}`);
   return lines;
 }
 
@@ -179,43 +146,31 @@ export function packetToCompileInput(input: PacketAdapterInput): CompileSections
     `Compiled at: ${nowIso()}`,
   ];
 
-  const relatedDecisions = linkedContext?.related_decisions ?? task.context.related_decisions;
-  const relatedNotes = linkedContext?.related_notes ?? task.context.related_notes;
+  const relatedDecisions = linkedContext?.related_decisions ?? [];
+  const relatedNotes = linkedContext?.related_notes ?? [];
 
   const sections: Section[] = [
     textSection('task', 'Task', [
       `- ${task.title}`,
-      `- Type: ${task.type}`,
       `- Priority: ${task.priority}`,
       `- Status: ${task.status}`,
+      `- Created: ${task.created_at}`,
     ]),
-    textSection('objective', 'Objective', [task.goal]),
-    textSection('why', 'Why this matters', [task.summary]),
-    listSection('in_scope', 'In scope', task.scope.in_scope, {
-      trim: { policy: 'trim-last', limit: 8, limit_strict: 8, overflow_label: 'in-scope items' },
+    textSection('objective', 'Objective', [task.summary]),
+    textSection('trigger', 'Trigger', [
+      `- Condition: ${task.trigger.condition}`,
+      ...(task.trigger.check_command ? [`- Verify: \`${task.trigger.check_command}\``] : []),
+      ...(task.trigger.depends_on.length > 0 ? [`- Depends on: ${task.trigger.depends_on.join(', ')}`] : []),
+    ]),
+    listSection('entry_points', 'Entry points', task.entry_points, {
+      trim: { policy: 'trim-last', limit: 3, limit_strict: 3, overflow_label: 'entry points' },
     }),
-    listSection('out_of_scope', 'Out of scope', task.scope.out_of_scope, {
-      trim: { policy: 'trim-last', limit: 5, limit_strict: 3, overflow_label: 'out-of-scope items' },
-    }),
-    listSection('files_to_read', 'Read these first', task.implementation.files_to_read, {
-      trim: { policy: 'trim-last', limit: 10, limit_strict: 10, overflow_label: 'read-first files' },
-    }),
-    listSection('files_to_avoid', 'Avoid changing', task.implementation.files_to_avoid, {
-      trim: { policy: 'trim-last', limit: 5, limit_strict: 3, overflow_label: 'avoid files' },
-    }),
-    // Linked context stays a text section so the "no related X" placeholders stay where they were.
+    textSection('definition_of_done', 'Definition of done', [task.done_condition]),
+    textSection('validation', 'Validation command', [`\`${task.validation_command}\``]),
     textSection('linked_context', 'Linked context', renderLinkedContext(relatedDecisions, relatedNotes, 'full')),
-    // Previous runner context — only when this run is a later step in a pipeline.
     ...(linkedContext?.previous_runs && linkedContext.previous_runs.length > 0
       ? [textSection('previous_runs', 'Previous runner context', renderPreviousRuns(linkedContext.previous_runs))]
       : []),
-    textSection('constraints', 'Constraints', renderConstraints(task.constraints.technical, task.constraints.design)),
-    listSection(
-      'validation',
-      'Validation',
-      task.execution.commands.validation.map(validationLine),
-    ),
-    listSection('definition_of_done', 'Definition of done', task.definition_of_done),
     textSection('runner_guidance', 'Runner guidance', runnerGuidance(runner)),
     textSection('final_response_format', 'Final response format', finalResponseFormat(runner)),
   ];
@@ -227,22 +182,6 @@ export function packetToCompileInput(input: PacketAdapterInput): CompileSections
   };
 }
 
-// Legacy metadata expects `trimmed_sections: string[]` using the historical names.
-// Map the new core metadata back for back-compat.
-export const LEGACY_TRIM_IDS: readonly string[] = [
-  'in_scope',
-  'out_of_scope',
-  'files_to_read',
-  'files_to_avoid',
-  'related_decisions',
-  'related_notes',
-];
-
-// Rebuild linked_context lines under a trim mode. The core compileSections()
-// can't partially trim a text section, so we run the full pipeline twice in
-// prompt-compiler.ts: first with full linked_context, and again with trimmed
-// linked_context if the baseline is over budget. See prompt-compiler.ts for
-// the wrapper that orchestrates this.
 export function linkedContextForMode(
   relatedDecisions: string[],
   relatedNotes: string[],

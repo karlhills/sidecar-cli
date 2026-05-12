@@ -200,9 +200,9 @@ Notes, decisions, worklogs:
 
 Tasks:
 
-- `sidecar task create --title "<title>" --summary "<summary>" --goal "<goal>" [--type feature|bug|chore|research] [--status draft|ready|queued|running|review|blocked|done] [--priority low|medium|high] [--json]`
-- `sidecar task set-status <task-id> --to draft|ready|queued|running|review|blocked|done --reason "<text>" [--by human|agent] [--session <id>] [--json]`
-- `sidecar task list [--status draft|ready|queued|running|review|blocked|done|all] [--json]`
+- `sidecar task create --title "<title>" --summary "<summary>" --trigger "<condition>" --entry-points <path1,path2> --done-condition "<done>" --validate-cmd "<cmd>" [--trigger-check <command>] [--depends-on <task-ids>] [--status active|blocked|done] [--priority low|medium|high] [--json]`
+- `sidecar task set-status <task-id> --to active|blocked|done --reason "<text>" [--by human|agent] [--session <id>] [--json]`
+- `sidecar task list [--status active|blocked|done|all] [--json]`
 
 Sessions:
 
@@ -217,46 +217,20 @@ Artifacts:
 - `sidecar artifact add <path> [--kind file|doc|screenshot|other] [--note <text>] [--json]`
 - `sidecar artifact list [--json]`
 
-## Validation kinds and auto-approve
+## Validation and auto-approve
 
-Task packets describe post-run validation commands under `execution.commands.validation`. Each entry is tagged with a **kind** so Sidecar can route the result intelligently, apply a sensible default timeout, and surface the outcome in the UI and CLI.
-
-### Kinds
-
-| Kind | Default timeout | Intended for |
-| --- | --- | --- |
-| `typecheck` | 3 min | `tsc --noEmit`, `mypy`, `pyright` |
-| `lint` | 3 min | `eslint`, `ruff`, `golangci-lint` |
-| `test` | 10 min | unit/integration suites |
-| `build` | 10 min | bundlers, compilers, image builds |
-| `custom` | 5 min | anything else (the legacy default) |
-
-### Authoring
-
-On the CLI, prefix a command with `kind:`. Entries without a prefix default to `custom`.
+Queue tasks now store one required `validation_command` that agents run to
+verify the done condition.
 
 ```bash
 sidecar task create \
   --title "Add import flow" \
-  --summary "..." --goal "..." \
-  --validate-cmds "typecheck:tsc --noEmit,lint:eslint .,test:npm test"
+  --summary "..." \
+  --trigger "After T-012 lands" --depends-on T-012 \
+  --entry-points src/cli.ts,src/tasks/task-packet.ts \
+  --done-condition "Task packets persist in active/blocked/done folders" \
+  --validate-cmd "npm run build"
 ```
-
-In a task packet JSON file, use the object form:
-
-```json
-"execution": {
-  "commands": {
-    "validation": [
-      { "kind": "typecheck", "command": "tsc --noEmit" },
-      { "kind": "test", "command": "npm test", "timeout_ms": 900000 },
-      "bash scripts/smoke.sh"
-    ]
-  }
-}
-```
-
-String entries are accepted for back-compat (promoted to `{ kind: "custom", command }` on load).
 
 ### Auto-approve on all-green
 
@@ -434,7 +408,7 @@ sidecar context --format markdown
 sidecar session start --actor agent --name codex
 sidecar decision record --title "Use SQLite" --summary "Local-first persistence"
 sidecar worklog record --goal "init flow" --done "Implemented schema and command surface" --files src/cli.ts,src/db/schema.ts
-sidecar task create --title "Add integration tests" --summary "Add integration coverage for init flow" --goal "Ensure init flow has regression coverage" --priority medium
+sidecar task create --title "Add integration tests" --summary "Add integration coverage for init flow" --trigger "When test matrix is finalized" --entry-points src/cli.ts --done-condition "Integration suite covers init flow" --validate-cmd "npm test" --priority medium
 sidecar summary refresh
 sidecar session end --summary "Initialization and recording flow implemented"
 ```

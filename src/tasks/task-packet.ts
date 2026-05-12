@@ -1,167 +1,194 @@
 import { z } from 'zod';
+import { nowIso } from '../lib/format.js';
 
-export const TASK_PACKET_VERSION = '1.0';
+export const TASK_PACKET_VERSION = '2.0';
 
 const taskIdSchema = z.string().regex(/^T-\d{3,}$/, 'Task id must look like T-001');
 
-export const taskPacketStatusSchema = z.enum(['draft', 'ready', 'queued', 'running', 'review', 'blocked', 'done']);
+export const taskPacketStatusSchema = z.enum(['active', 'blocked', 'done']);
 export const taskPacketPrioritySchema = z.enum(['low', 'medium', 'high']);
-export const taskPacketTypeSchema = z.enum(['feature', 'bug', 'chore', 'research']);
-export const taskAgentRoleSchema = z.enum(['planner', 'builder-ui', 'builder-app', 'reviewer', 'tester']);
-export const taskRunnerSchema = z.enum(['codex', 'claude']);
 
-export const validationKindSchema = z.enum(['typecheck', 'lint', 'test', 'build', 'custom']);
-export type ValidationKindValue = z.infer<typeof validationKindSchema>;
+export const taskTriggerSchema = z
+  .object({
+    condition: z.string().min(1, 'trigger condition is required'),
+    check_command: z.string().min(1).optional(),
+    depends_on: z.array(taskIdSchema).default([]),
+  })
+  .strict();
 
-// Accept string entries ("npm test") or object entries ({kind,command,...}). String entries
-// are promoted to { kind: 'custom', command }. This preserves the v1 packet shape while
-// giving new packets first-class typed validation steps.
-export const validationStepSchema = z.preprocess(
-  (raw) => {
-    if (typeof raw === 'string') {
-      return { kind: 'custom', command: raw };
+export const taskResultSchema = z
+  .object({
+    summary: z.string().default(''),
+    changed_files: z.array(z.string()).default([]),
+    validation_output: z.string().default(''),
+    validated_at: z.string().datetime({ offset: true }).nullable().default(null),
+  })
+  .strict();
+
+function normalizeLegacyStatus(value: unknown): unknown {
+  if (value === 'open') return 'active';
+  if (value === 'in_progress') return 'active';
+  if (value === 'draft' || value === 'ready' || value === 'queued' || value === 'running' || value === 'review') return 'active';
+  return value;
+}
+
+function normalizeLegacyPacket(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return raw;
+  const packet = raw as Record<string, unknown>;
+
+  const entryFromLegacy = (() => {
+    const implementation = packet.implementation as Record<string, unknown> | undefined;
+    const files = implementation?.files_to_read;
+    if (Array.isArray(files)) {
+      return files
+        .map((v) => (typeof v === 'string' ? v.trim() : ''))
+        .filter((v) => v.length > 0)
+        .slice(0, 3);
     }
-    return raw;
-  },
-  z
-    .object({
-      kind: validationKindSchema.default('custom'),
-      command: z.string().min(1, 'validation command is required'),
-      name: z.string().optional(),
-      timeout_ms: z.number().int().positive().optional(),
-    })
-    .strict(),
-);
-export type ValidationStepInput = z.infer<typeof validationStepSchema>;
+    return [];
+  })();
 
-export const taskPacketSchema = z
+  const doneFromLegacy = (() => {
+    const dod = packet.definition_of_done;
+    if (Array.isArray(dod) && dod.length > 0) {
+      const first = dod.find((v) => typeof v === 'string' && v.trim().length > 0);
+      if (typeof first === 'string') return first.trim();
+    }
+    const goal = typeof packet.goal === 'string' ? packet.goal.trim() : '';
+    return goal;
+  })();
+
+  const validationFromLegacy = (() => {
+    const execution = packet.execution as Record<string, unknown> | undefined;
+    const commands = execution?.commands as Record<string, unknown> | undefined;
+    const validation = commands?.validation;
+    if (Array.isArray(validation) && validation.length > 0) {
+      const first = validation[0];
+      if (typeof first === 'string') return first.trim();
+      if (first && typeof first === 'object') {
+        const command = (first as { command?: unknown }).command;
+        if (typeof command === 'string') return command.trim();
+      }
+    }
+    return '';
+  })();
+
+  const dependenciesFromLegacy = (() => {
+    const deps = packet.dependencies;
+    if (Array.isArray(deps)) {
+      return deps.filter((v): v is string => typeof v === 'string' && /^T-\d{3,}$/.test(v));
+    }
+    return [];
+  })();
+
+  const baseSummary = typeof packet.summary === 'string' ? packet.summary.trim() : '';
+  const baseGoal = typeof packet.goal === 'string' ? packet.goal.trim() : '';
+  const baseTitle = typeof packet.title === 'string' ? packet.title.trim() : '';
+  const resultLegacy = (() => {
+    const result = packet.result as Record<string, unknown> | undefined;
+    if (!result || typeof result !== 'object') return undefined;
+    const validationResults = Array.isArray(result.validation_results)
+      ? result.validation_results.filter((v): v is string => typeof v === 'string')
+      : [];
+    return {
+      summary: typeof result.summary === 'string' ? result.summary : '',
+      changed_files: Array.isArray(result.changed_files)
+        ? result.changed_files.filter((v): v is string => typeof v === 'string')
+        : [],
+      validation_output: validationResults.join('\n'),
+      validated_at: null,
+    };
+  })();
+
+  return {
+    version: typeof packet.version === 'string' ? packet.version : TASK_PACKET_VERSION,
+    task_id: packet.task_id,
+    title: baseTitle,
+    summary: baseSummary || baseGoal || baseTitle,
+    priority: packet.priority,
+    status: normalizeLegacyStatus(packet.status),
+    created_at: packet.created_at,
+    updated_at: packet.updated_at,
+    trigger: packet.trigger ?? {
+      condition: dependenciesFromLegacy.length > 0
+        ? `After dependencies are done: ${dependenciesFromLegacy.join(', ')}`
+        : 'Set explicit trigger before execution.',
+      depends_on: dependenciesFromLegacy,
+    },
+    entry_points: packet.entry_points ?? entryFromLegacy,
+    done_condition: packet.done_condition ?? doneFromLegacy,
+    validation_command: packet.validation_command ?? validationFromLegacy,
+    ...(resultLegacy ? { result: resultLegacy } : {}),
+  };
+}
+
+const taskPacketShapeSchema = z
   .object({
     version: z.string().default(TASK_PACKET_VERSION),
     task_id: taskIdSchema,
     title: z.string().min(1, 'title is required'),
-    type: taskPacketTypeSchema.default('chore'),
-    status: z
-      .preprocess((value) => {
-        if (value === 'open') return 'draft';
-        if (value === 'in_progress') return 'running';
-        return value;
-      }, taskPacketStatusSchema)
-      .default('draft'),
-    priority: taskPacketPrioritySchema.default('medium'),
     summary: z.string().min(1, 'summary is required'),
-    goal: z.string().min(1, 'goal is required'),
-    scope: z.object({
-      in_scope: z.array(z.string()).default([]),
-      out_of_scope: z.array(z.string()).default([]),
-    }),
-    context: z.object({
-      related_decisions: z.array(z.string()).default([]),
-      related_notes: z.array(z.string()).default([]),
-    }),
-    implementation: z.object({
-      files_to_read: z.array(z.string()).default([]),
-      files_to_avoid: z.array(z.string()).default([]),
-    }),
-    constraints: z.object({
-      technical: z.array(z.string()).default([]),
-      design: z.array(z.string()).default([]),
-    }),
-    execution: z.object({
-      commands: z.object({
-        validation: z.array(validationStepSchema).default([]),
-      }),
-    }),
-    dependencies: z.array(taskIdSchema).default([]),
-    tags: z.array(z.string()).default([]),
-    target_areas: z.array(z.string()).default([]),
-    definition_of_done: z.array(z.string()).default([]),
-    tracking: z.object({
-      branch: z.string().default(''),
-      worktree: z.string().default(''),
-      assigned_agent_role: taskAgentRoleSchema.nullable().default(null),
-      assigned_runner: taskRunnerSchema.nullable().default(null),
-      assignment_reason: z.string().default(''),
-      assigned_at: z.string().datetime({ offset: true }).nullable().default(null),
-    }),
-    result: z.object({
-      summary: z.string().default(''),
-      changed_files: z.array(z.string()).default([]),
-      validation_results: z.array(z.string()).default([]),
+    priority: taskPacketPrioritySchema.default('medium'),
+    status: z.preprocess(normalizeLegacyStatus, taskPacketStatusSchema).default('active'),
+    created_at: z.string().datetime({ offset: true }).default(() => nowIso()),
+    updated_at: z.string().datetime({ offset: true }).default(() => nowIso()),
+    trigger: taskTriggerSchema,
+    entry_points: z
+      .array(z.string().min(1))
+      .min(1, 'at least one entry point is required')
+      .max(3, 'entry points must be 1-3 files'),
+    done_condition: z.string().min(1, 'done condition is required'),
+    validation_command: z.string().min(1, 'validation command is required'),
+    result: taskResultSchema.default({
+      summary: '',
+      changed_files: [],
+      validation_output: '',
+      validated_at: null,
     }),
   })
   .strict();
 
-export const taskPacketInputSchema = taskPacketSchema.omit({ task_id: true }).partial({
+export const taskPacketSchema = z.preprocess(normalizeLegacyPacket, taskPacketShapeSchema);
+
+export const taskPacketInputSchema = taskPacketShapeSchema.omit({ task_id: true }).partial({
   version: true,
-  type: true,
-  status: true,
   priority: true,
-  scope: true,
-  context: true,
-  implementation: true,
-  constraints: true,
-  execution: true,
-  dependencies: true,
-  tags: true,
-  target_areas: true,
-  definition_of_done: true,
-  tracking: true,
+  status: true,
+  created_at: true,
+  updated_at: true,
   result: true,
 });
 
 export type TaskPacket = z.infer<typeof taskPacketSchema>;
 export type TaskPacketStatus = z.infer<typeof taskPacketStatusSchema>;
 export type TaskPacketPriority = z.infer<typeof taskPacketPrioritySchema>;
-export type TaskPacketType = z.infer<typeof taskPacketTypeSchema>;
-export type TaskAgentRole = z.infer<typeof taskAgentRoleSchema>;
-export type TaskRunner = z.infer<typeof taskRunnerSchema>;
+export type TaskTrigger = z.infer<typeof taskTriggerSchema>;
 export type TaskPacketInput = z.infer<typeof taskPacketInputSchema>;
 
 export function createTaskPacket(taskId: string, input: TaskPacketInput): TaskPacket {
+  const now = nowIso();
   const normalized = {
-    ...input,
     version: input.version ?? TASK_PACKET_VERSION,
     task_id: taskId,
-    type: input.type ?? 'chore',
-    status: input.status ?? 'draft',
+    title: input.title,
+    summary: input.summary,
     priority: input.priority ?? 'medium',
-    scope: {
-      in_scope: input.scope?.in_scope ?? [],
-      out_of_scope: input.scope?.out_of_scope ?? [],
+    status: input.status ?? 'active',
+    created_at: input.created_at ?? now,
+    updated_at: input.updated_at ?? now,
+    trigger: {
+      condition: input.trigger?.condition ?? '',
+      ...(input.trigger?.check_command ? { check_command: input.trigger.check_command } : {}),
+      depends_on: input.trigger?.depends_on ?? [],
     },
-    context: {
-      related_decisions: input.context?.related_decisions ?? [],
-      related_notes: input.context?.related_notes ?? [],
-    },
-    implementation: {
-      files_to_read: input.implementation?.files_to_read ?? [],
-      files_to_avoid: input.implementation?.files_to_avoid ?? [],
-    },
-    constraints: {
-      technical: input.constraints?.technical ?? [],
-      design: input.constraints?.design ?? [],
-    },
-    execution: {
-      commands: {
-        validation: input.execution?.commands?.validation ?? [],
-      },
-    },
-    dependencies: input.dependencies ?? [],
-    tags: input.tags ?? [],
-    target_areas: input.target_areas ?? [],
-    definition_of_done: input.definition_of_done ?? [],
-    tracking: {
-      branch: input.tracking?.branch ?? '',
-      worktree: input.tracking?.worktree ?? '',
-      assigned_agent_role: input.tracking?.assigned_agent_role ?? null,
-      assigned_runner: input.tracking?.assigned_runner ?? null,
-      assignment_reason: input.tracking?.assignment_reason ?? '',
-      assigned_at: input.tracking?.assigned_at ?? null,
-    },
+    entry_points: input.entry_points ?? [],
+    done_condition: input.done_condition ?? '',
+    validation_command: input.validation_command ?? '',
     result: {
       summary: input.result?.summary ?? '',
       changed_files: input.result?.changed_files ?? [],
-      validation_results: input.result?.validation_results ?? [],
+      validation_output: input.result?.validation_output ?? '',
+      validated_at: input.result?.validated_at ?? null,
     },
   };
 
