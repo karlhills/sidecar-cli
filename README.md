@@ -200,9 +200,9 @@ Notes, decisions, worklogs:
 
 Tasks:
 
-- `sidecar task add "<title>" [--description <text>] [--priority low|medium|high] [--by human|agent] [--json]`
-- `sidecar task done <task-id> [--by human|agent] [--json]`
-- `sidecar task list [--status open|done|all] [--format table|json] [--json]`
+- `sidecar task create --title "<title>" --summary "<summary>" --goal "<goal>" [--type feature|bug|chore|research] [--status draft|ready|queued|running|review|blocked|done] [--priority low|medium|high] [--json]`
+- `sidecar task set-status <task-id> --to draft|ready|queued|running|review|blocked|done --reason "<text>" [--by human|agent] [--session <id>] [--json]`
+- `sidecar task list [--status draft|ready|queued|running|review|blocked|done|all] [--json]`
 
 Sessions:
 
@@ -434,7 +434,7 @@ sidecar context --format markdown
 sidecar session start --actor agent --name codex
 sidecar decision record --title "Use SQLite" --summary "Local-first persistence"
 sidecar worklog record --goal "init flow" --done "Implemented schema and command surface" --files src/cli.ts,src/db/schema.ts
-sidecar task add "Add integration tests" --priority medium --by agent
+sidecar task create --title "Add integration tests" --summary "Add integration coverage for init flow" --goal "Ensure init flow has regression coverage" --priority medium
 sidecar summary refresh
 sidecar session end --summary "Initialization and recording flow implemented"
 ```
@@ -449,7 +449,7 @@ Required minimum for any code change:
 1. `sidecar context --format markdown`
 2. `sidecar worklog record --done "<what changed>" --files <paths> --by agent`
 3. if behavior/design changed: `sidecar decision record ...`
-4. if follow-up exists: `sidecar task add ...`
+4. if follow-up exists: `sidecar task create ...`
 5. `sidecar summary refresh`
 
 Optional local enforcement:
@@ -489,7 +489,7 @@ When changes are made in this repo, document them in Sidecar:
 1. `sidecar context --format markdown`
 2. `sidecar worklog record --done "<what changed>" --files <paths> --by human|agent`
 3. `sidecar decision record ...` when behavior/design changes
-4. `sidecar task add ...` for follow-up work
+4. `sidecar task create ...` for follow-up work
 5. `sidecar summary refresh`
 
 ## Local storage details
@@ -579,7 +579,7 @@ Standard JSON envelope:
 {
   "ok": true,
   "version": "1.0",
-  "command": "task add",
+  "command": "task create",
   "data": {},
   "errors": []
 }
@@ -591,7 +591,7 @@ Failure envelope:
 {
   "ok": false,
   "version": "1.0",
-  "command": "task add",
+  "command": "task create",
   "data": null,
   "errors": ["..."]
 }

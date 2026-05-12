@@ -32,19 +32,23 @@ Use this at the start of work to see:
 Add a task:
 
 ```bash
-sidecar task add "Add user profile settings page" --priority medium --by human
+sidecar task create \
+  --title "Add user profile settings page" \
+  --summary "Create settings UI and persistence wiring" \
+  --goal "Users can update profile settings successfully" \
+  --priority medium
 ```
 
-List open tasks:
+List draft tasks:
 
 ```bash
-sidecar task list --status open
+sidecar task list --status draft
 ```
 
 Mark a task done:
 
 ```bash
-sidecar task done <task-id> --by human
+sidecar task set-status <task-id> --to done --reason "Completed and verified" --by human
 ```
 
 ## 4) Capture quick notes during implementation
@@ -72,7 +76,11 @@ sidecar decision record --title "Use optimistic save for settings" --summary "Im
 If follow-up work remains, add a task:
 
 ```bash
-sidecar task add "Add integration test for failed settings save" --priority medium --by agent
+sidecar task create \
+  --title "Add integration test for failed settings save" \
+  --summary "Cover failed-save UI path and retry" \
+  --goal "Protect failed-save behavior from regressions" \
+  --priority medium
 ```
 
 Refresh project summary:
@@ -90,7 +98,7 @@ sidecar worklog record --done "<what changed>" --files <paths> --by agent
 # if behavior/design changed:
 sidecar decision record --title "<decision>" --summary "<why>" --by agent
 # if follow-up exists:
-sidecar task add "<follow-up>" --priority medium --by agent
+sidecar task create --title "<follow-up>" --summary "<short summary>" --goal "<specific outcome>" --priority medium
 sidecar summary refresh
 ```
 

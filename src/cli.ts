@@ -22,7 +22,7 @@ import { refreshSummaryFile } from './services/summary-service.js';
 import { buildContext } from './services/context-service.js';
 import { getCapabilitiesManifest } from './services/capabilities-service.js';
 import { addArtifact, listArtifacts } from './services/artifact-service.js';
-import { addDecision, addNote, addWorklog, getActiveSessionId, listRecentEvents } from './services/event-service.js';
+import { addDecision, addNote, addWorklog, createEvent, getActiveSessionId, listRecentEvents } from './services/event-service.js';
 import { currentSession, endSession, startSession, verifySessionHygiene } from './services/session-service.js';
 import { HOOK_EVENTS, handleHookEvent, hookEventSchema, hookPayloadSchema } from './services/hook-service.js';
 import { loadPromptSpec } from './prompts/prompt-spec.js';
@@ -39,6 +39,7 @@ import { compileTaskPrompt } from './prompts/prompt-service.js';
 import { runPipelineExecution, runTaskExecution } from './services/run-orchestrator-service.js';
 import { loadRunnerPreferences, type AgentRole } from './runners/config.js';
 import { assignTask, queueReadyTasks } from './services/task-orchestration-service.js';
+import { transitionTaskStatus } from './services/task-status-service.js';
 import { buildReviewSummary, createFollowupTaskFromRun, reviewRun } from './services/run-review-service.js';
 import type { ActorType, ArtifactKind, SidecarConfig } from './types/models.js';
 
@@ -1218,7 +1219,7 @@ task
   .description('List task packets')
   .option('--status <status>', 'draft|ready|queued|running|review|blocked|done|all', 'all')
   .option('--json', 'Print machine-readable JSON output')
-  .addHelpText('after', '\nExamples:\n  $ sidecar task list\n  $ sidecar task list --status open\n  $ sidecar task list --json')
+  .addHelpText('after', '\nExamples:\n  $ sidecar task list\n  $ sidecar task list --status draft\n  $ sidecar task list --json')
   .action((opts) => {
     const command = 'task list';
     try {
@@ -1283,6 +1284,71 @@ task
         `Runner: ${result.runner}`,
         `Reason: ${result.reason}`,
       ]);
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
+    }
+  });
+
+task
+  .command('set-status <task-id>')
+  .description('Transition task packet status with validation and an audit note')
+  .requiredOption('--to <status>', 'draft|ready|queued|running|review|blocked|done')
+  .requiredOption('--reason <text>', 'Why this manual transition is needed')
+  .option('--by <actor>', 'human|agent', 'human')
+  .option('--session <session-id>', 'Session id override')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText(
+    'after',
+    '\nExamples:\n  $ sidecar task set-status T-001 --to ready --reason "Ready to queue"\n  $ sidecar task set-status T-001 --to done --reason "Administrative cleanup" --by agent --json'
+  )
+  .action((taskIdText, opts) => {
+    const command = 'task set-status';
+    try {
+      const taskId = taskIdText.trim().toUpperCase();
+      const toStatus = taskPacketStatusSchema.parse(opts.to);
+      const reason = String(opts.reason ?? '').trim();
+      if (!reason) fail('Reason is required');
+      const by = actorSchema.parse(opts.by as ActorType);
+      const { db, projectId } = requireInitialized();
+      const sessionId = maybeSessionId(db, projectId, opts.session);
+      const result = transitionTaskStatus(resolveProjectRoot(), taskId, toStatus);
+      const eventId = createEvent(db, {
+        projectId,
+        type: 'note',
+        title: `Task ${result.task_id} status changed`,
+        summary: `${result.from_status} -> ${result.to_status}: ${reason}`,
+        details: {
+          task_id: result.task_id,
+          from_status: result.from_status,
+          to_status: result.to_status,
+          reason,
+          command: 'task set-status',
+        },
+        createdBy: by,
+        sessionId,
+      });
+      db.close();
+      respondSuccess(
+        command,
+        Boolean(opts.json),
+        {
+          task: result,
+          event: {
+            id: eventId,
+            type: 'note',
+            title: `Task ${result.task_id} status changed`,
+            summary: `${result.from_status} -> ${result.to_status}: ${reason}`,
+            created_by: by,
+            session_id: sessionId,
+            created_at: nowIso(),
+          },
+        },
+        [
+          `Updated ${result.task_id}: ${result.from_status} -> ${result.to_status}.`,
+          `Reason: ${reason}`,
+          `Recorded note event #${eventId}.`,
+        ]
+      );
     } catch (err) {
       handleCommandError(command, Boolean(opts.json), err);
     }

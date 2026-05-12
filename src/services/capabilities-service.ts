@@ -224,6 +224,13 @@ export function getCapabilitiesManifest(version: string) {
             options: ['--agent-role planner|builder-ui|builder-app|reviewer|tester', '--runner codex|claude', '--json'],
           },
           {
+            name: 'set-status',
+            description: 'Transition task packet status with validation',
+            json_output: true,
+            arguments: ['<task-id>'],
+            options: ['--to draft|ready|queued|running|review|blocked|done', '--reason <text>', '--by human|agent', '--session <id>', '--json'],
+          },
+          {
             name: 'create-followup',
             description: 'Create follow-up task from run report',
             json_output: true,
