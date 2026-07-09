@@ -87,6 +87,53 @@ The optional UI is installed on demand by `sidecar ui`. Its source lives in `pac
 
 Per-version release notes live at [github.com/karlhills/sidecar-cli/releases](https://github.com/karlhills/sidecar-cli/releases).
 
+### Cutting a release
+
+Release versions are explicit. The release scripts do not guess the next version for you.
+
+- stable releases must be cut from `main`
+- beta releases must be cut from `next`
+- rc releases must be cut from `release/x.y.z`
+
+Examples:
+
+```bash
+# stable from main
+npm run release:stable -- --version 0.1.6
+
+# beta from next
+npm run release:beta -- --version 0.1.7 --pre 1
+
+# rc from release/0.1.7
+npm run release:rc -- --version 0.1.7 --pre 1
+```
+
+What the script does:
+
+1. updates `package.json` and `package-lock.json`
+2. commits `release: <version>`
+3. validates the branch/tag/version combination
+4. creates git tag `v<version>`
+5. pushes the branch and tag so GitHub Actions can publish it
+
+Preview a release without changing anything:
+
+```bash
+npm run release:stable -- --version 0.1.6 --dry-run
+```
+
+After the tag is pushed, GitHub Actions publishes the matching npm channel:
+
+- stable tag `v0.1.6` -> npm `latest`
+- rc tag `v0.1.7-rc.1` -> npm `rc`
+- beta tag `v0.1.7-beta.1` -> npm `beta`
+
+Check current published channels any time:
+
+```bash
+sidecar release status
+```
+
 ## Quick start
 
 1. Initialize in a project directory:
