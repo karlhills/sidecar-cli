@@ -1,10 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { gt as semverGt } from 'semver';
-
-export type ReleaseChannel = 'latest' | 'beta' | 'rc';
+import { detectReleaseChannel, fetchDistTags, type ReleaseChannel } from './release-status.js';
 
 type UpdateCache = {
   lastCheckedAt: string;
@@ -33,32 +31,11 @@ function saveCache(cache: UpdateCache): void {
   fs.writeFileSync(file, JSON.stringify(cache));
 }
 
-export function detectReleaseChannel(version: string): ReleaseChannel {
-  if (version.includes('-beta.')) return 'beta';
-  if (version.includes('-rc.')) return 'rc';
-  return 'latest';
-}
-
 function shouldCheckNow(cache: UpdateCache | null): boolean {
   if (!cache?.lastCheckedAt) return true;
   const last = Date.parse(cache.lastCheckedAt);
   if (Number.isNaN(last)) return true;
   return Date.now() - last >= CHECK_INTERVAL_MS;
-}
-
-function fetchDistTags(pkgName: string): Record<string, string> | null {
-  try {
-    const raw = execFileSync('npm', ['view', pkgName, 'dist-tags', '--json'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 2000,
-    }).trim();
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Record<string, string>;
-    return typeof parsed === 'object' && parsed ? parsed : null;
-  } catch {
-    return null;
-  }
 }
 
 export function getUpdateNotice(options: {

@@ -15,6 +15,13 @@ import { bannerDisabled, renderBanner } from './lib/banner.js';
 import { c } from './lib/color.js';
 import { renderTable } from './lib/table.js';
 import { getUpdateNotice } from './lib/update-check.js';
+import {
+  detectReleaseChannel,
+  fetchPublishedPackageVersion,
+  getGitReleaseStatus,
+  getPublishedChannelStatus,
+  type ReleaseChannel,
+} from './lib/release-status.js';
 import { ensureUiInstalled, launchUiServer } from './lib/ui.js';
 import { requireInitialized } from './db/client.js';
 import { renderAgentsMarkdown, renderClaudeMarkdown } from './templates/agents.js';
@@ -211,6 +218,52 @@ function renderContextMarkdown(data: ReturnType<typeof buildContext>): string {
   return lines.join('\n');
 }
 
+function formatIsoDate(value: string | null): string {
+  if (!value) return 'n/a';
+  return value.replace('T', ' ').replace('.000Z', 'Z');
+}
+
+function renderReleaseStatusText(data: {
+  packageName: string;
+  localVersion: string;
+  localChannel: ReleaseChannel;
+  currentBranch: string | null;
+  headTags: string[];
+  nearestTag: string | null;
+  published: Record<ReleaseChannel, { version: string | null; publishedAt: string | null }>;
+  ui: { workspaceVersion: string | null; publishedVersion: string | null };
+}): string {
+  const lines: string[] = [];
+  const rows = [
+    ['stable (latest)', data.published.latest.version ?? 'unpublished', formatIsoDate(data.published.latest.publishedAt)],
+    ['rc', data.published.rc.version ?? 'unpublished', formatIsoDate(data.published.rc.publishedAt)],
+    ['beta', data.published.beta.version ?? 'unpublished', formatIsoDate(data.published.beta.publishedAt)],
+  ];
+  const channelWidth = Math.max('Channel'.length, ...rows.map((row) => row[0].length));
+  const versionWidth = Math.max('Version'.length, ...rows.map((row) => row[1].length));
+  lines.push('Release status');
+  lines.push(`Package: ${data.packageName}`);
+  lines.push(`Local version: ${data.localVersion} (${data.localChannel})`);
+  lines.push(`Branch: ${data.currentBranch ?? 'n/a'}`);
+  lines.push(`Head tags: ${data.headTags.length > 0 ? data.headTags.join(', ') : 'none'}`);
+  lines.push(`Nearest tag: ${data.nearestTag ?? 'none'}`);
+  lines.push('');
+  lines.push(
+    `${'Channel'.padEnd(channelWidth)}  ${'Version'.padEnd(versionWidth)}  Published`
+  );
+  lines.push(
+    `${'-'.repeat(channelWidth)}  ${'-'.repeat(versionWidth)}  ---------`
+  );
+  for (const [channel, version, published] of rows) {
+    lines.push(`${channel.padEnd(channelWidth)}  ${version.padEnd(versionWidth)}  ${published}`);
+  }
+  lines.push('');
+  lines.push('Optional UI package');
+  lines.push(`Workspace version: ${data.ui.workspaceVersion ?? 'missing from workspace'}`);
+  lines.push(`Published version: ${data.ui.publishedVersion ?? 'not published to npm'}`);
+  return lines.join('\n');
+}
+
 async function readStdinText(): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) {
@@ -234,6 +287,15 @@ function parseCsvOption(input?: string): string[] {
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function readJsonFile<T>(filePath: string): T | null {
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8')) as T;
+  } catch {
+    return null;
+  }
 }
 
 async function askWithDefault(
@@ -379,6 +441,37 @@ program
       }
     } catch (err) {
       handleCommandError(command, false, err);
+    }
+  });
+
+const release = program.command('release').description('Release visibility and publishing helpers');
+
+release
+  .command('status')
+  .description('Show local version state and published npm channels')
+  .option('--json', 'Print machine-readable JSON output')
+  .addHelpText('after', '\nExamples:\n  $ sidecar release status\n  $ sidecar release status --json')
+  .action((opts) => {
+    const command = 'release status';
+    try {
+      const git = getGitReleaseStatus();
+      const uiPkg = readJsonFile<{ version?: string }>(path.resolve(process.cwd(), 'packages/ui/package.json'));
+      const data = {
+        packageName: 'sidecar-cli',
+        localVersion: pkg.version,
+        localChannel: detectReleaseChannel(pkg.version),
+        currentBranch: git.currentBranch,
+        headTags: git.headTags,
+        nearestTag: git.nearestTag,
+        published: getPublishedChannelStatus('sidecar-cli'),
+        ui: {
+          workspaceVersion: uiPkg?.version ?? null,
+          publishedVersion: fetchPublishedPackageVersion('@sidecar/ui'),
+        },
+      };
+      respondSuccess(command, Boolean(opts.json), data, [renderReleaseStatusText(data)]);
+    } catch (err) {
+      handleCommandError(command, Boolean(opts.json), err);
     }
   });
 

@@ -16,6 +16,12 @@ function read(cmd) {
   return execSync(cmd, { encoding: 'utf8' }).trim();
 }
 
+function expectedBranchFor(channelName, base) {
+  if (channelName === 'stable') return 'main';
+  if (channelName === 'beta') return 'next';
+  return `release/${base}`;
+}
+
 const channel = getArg('--channel');
 const baseVersion = getArg('--version');
 const pre = getArg('--pre');
@@ -52,8 +58,9 @@ if (gitStatus && !dryRun) {
 }
 
 const currentBranch = read('git rev-parse --abbrev-ref HEAD');
-if (currentBranch !== 'main') {
-  console.error(`Current branch is ${currentBranch}. Switch to main before cutting a release.`);
+const expectedBranch = expectedBranchFor(channel, baseVersion);
+if (currentBranch !== expectedBranch) {
+  console.error(`Current branch is ${currentBranch}. Switch to ${expectedBranch} before cutting a ${channel} release.`);
   process.exit(1);
 }
 
@@ -75,9 +82,9 @@ const commands = [
   `npm version ${version} --no-git-tag-version`,
   'git add package.json package-lock.json',
   `git commit -m "release: ${version}"`,
-  `npm run release_check -- --tag ${tag}`,
+  `npm run release_check -- --tag ${tag} --branch ${currentBranch}`,
   `git tag ${tag}`,
-  'git push origin main --tags',
+  `git push origin ${currentBranch} --tags`,
 ];
 
 if (dryRun) {

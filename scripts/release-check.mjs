@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import { execSync } from 'node:child_process';
 
 const args = process.argv.slice(2);
 
@@ -12,7 +13,12 @@ function getArg(name) {
   return idx >= 0 ? args[idx + 1] : undefined;
 }
 
+function read(cmd) {
+  return execSync(cmd, { encoding: 'utf8' }).trim();
+}
+
 const tag = getArg('--tag') || process.env.RELEASE_TAG;
+const explicitBranch = getArg('--branch');
 if (!tag) {
   usage();
   process.exit(1);
@@ -44,11 +50,27 @@ if (pkgVersion !== versionFromTag) {
 
 const npmTag = channel === 'stable' ? 'latest' : channel;
 const prerelease = channel !== 'stable';
+const currentBranch = explicitBranch || read('git rev-parse --abbrev-ref HEAD');
+
+function expectedBranchFor(channelName, version) {
+  if (channelName === 'stable') return 'main';
+  if (channelName === 'beta') return 'next';
+  return `release/${version}`;
+}
+
+const expectedBranch = expectedBranchFor(channel, versionFromTag.replace(/-(beta|rc)\.\d+$/, ''));
+
+if (currentBranch !== expectedBranch) {
+  console.error(`Branch mismatch for ${channel} release: found ${currentBranch}, expected ${expectedBranch}`);
+  process.exit(1);
+}
 
 console.log(JSON.stringify({
   ok: true,
   tag,
   channel,
+  branch: currentBranch,
+  expectedBranch,
   npmTag,
   prerelease,
   packageVersion: pkgVersion

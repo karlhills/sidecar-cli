@@ -15,7 +15,7 @@ Examples:
 - tag `v1.2.3` requires `"version": "1.2.3"`
 - tag `v1.2.3-beta.1` requires `"version": "1.2.3-beta.1"`
 
-## Branching strategy (recommended)
+## Branching strategy
 
 Use three long-lived lanes:
 
@@ -24,6 +24,8 @@ Use three long-lived lanes:
 - `release/x.y.z`: RC stabilization branch for a target release
 
 ### Responsibilities
+
+The release scripts enforce these lane rules:
 
 - `main`
   - only production-ready code
@@ -130,11 +132,12 @@ These commands will:
 2. commit version files
 3. run preflight validation
 4. create release tag
-5. push main + tags
+5. push the matching branch + tags
+6. fail if the current branch does not match the requested release channel
 
 ## Preflight check
 
-Before pushing a release tag, validate tag/version:
+Before pushing a release tag, validate tag/version/branch:
 
 ```bash
 npm run release_check -- --tag v1.2.3
@@ -166,7 +169,7 @@ npm version 1.2.3-beta.1 --no-git-tag-version
 git add package.json package-lock.json
 git commit -m "release: 1.2.3-beta.1"
 git tag v1.2.3-beta.1
-git push origin main --tags
+git push origin next --tags
 ```
 
 ### RC
@@ -176,7 +179,7 @@ npm version 1.2.3-rc.1 --no-git-tag-version
 git add package.json package-lock.json
 git commit -m "release: 1.2.3-rc.1"
 git tag v1.2.3-rc.1
-git push origin main --tags
+git push origin release/1.2.3 --tags
 ```
 
 ## Workflow files
@@ -189,6 +192,7 @@ Security notes:
 - workflows pin third-party actions to commit SHAs
 - CI runs with read-only contents permission
 - release job uses `environment: release` and scoped write permission
+- CI and release run on Node 22 to match the published package engine
 
 ## Packaging and formula scripts
 

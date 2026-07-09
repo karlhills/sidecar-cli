@@ -35,25 +35,15 @@ Install rc:
 npm install -g sidecar-cli@rc
 ```
 
-Install with Homebrew (stable):
+Homebrew:
 
-```bash
-brew tap karlhills/sidecar
-brew install sidecar
-```
+Homebrew automation exists in the release workflow, but the public tap/formula is not currently published. For now, install via npm.
 
 Or run without install:
 
 ```bash
 npx sidecar-cli --help
 npx sidecar-cli@beta --help
-```
-
-Update Homebrew install:
-
-```bash
-brew update
-brew upgrade sidecar
 ```
 
 Requirements:
@@ -81,13 +71,19 @@ npm run dev -- --help
 
 ## Release channels
 
-Sidecar ships features through `beta` → `rc` → `stable` as version bumps — there are no per-feature channel flags. Install `@beta` to try new features early; install default (stable) for the latest promoted release.
+Sidecar ships features through `beta` → `rc` → `stable` as version bumps. There are no per-feature channel flags.
 
-| Channel | Current version | Notes |
-| --- | --- | --- |
-| stable (`latest`) | `0.1.4` | Promoted releases. Homebrew tracks this channel. |
-| rc | _none newer than stable_ | Release candidates published only when preparing a stable cut. |
-| beta | `0.1.5-beta.2` | Dual-runner pipelines, run replay, ambient capture via Claude Code hooks, typed validation + auto-approve, freestanding prompt specs, `sidecar demo`. |
+- `latest` is the promoted stable CLI
+- `rc` is the current release-candidate line when one is open
+- `beta` is the current preview line
+
+To see what is actually published right now from your machine:
+
+```bash
+sidecar release status
+```
+
+The optional UI is installed on demand by `sidecar ui`. Its source lives in `packages/ui`, but it is not currently published as a standalone npm package.
 
 Per-version release notes live at [github.com/karlhills/sidecar-cli/releases](https://github.com/karlhills/sidecar-cli/releases).
 

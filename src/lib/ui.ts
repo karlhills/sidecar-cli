@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { detectReleaseChannel } from './update-check.js';
+import { detectReleaseChannel } from './release-status.js';
 import { SidecarError } from './errors.js';
 
 const UI_PACKAGE = '@sidecar/ui';
